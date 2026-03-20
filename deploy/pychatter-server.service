@@ -1,0 +1,17 @@
+[Unit]
+Description=PyChatter TCP Chat Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pychatter
+WorkingDirectory=/opt/pychatter
+Environment=PYCHATTER_HOST=127.0.0.1
+Environment=PYCHATTER_PORT=8765
+ExecStart=/opt/pychatter/scripts/run_server.sh
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
