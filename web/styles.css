@@ -389,6 +389,139 @@ body {
   gap: 8px;
 }
 
+/* ── Message toolbar ──────────────────────────────────────────────────── */
+.msg { position: relative; }
+
+.msg-toolbar {
+  position: absolute;
+  top: -14px;
+  right: 8px;
+  display: none;
+  background: #2b2d31;
+  border: 1px solid #40444b;
+  border-radius: 8px;
+  padding: 3px 6px;
+  gap: 3px;
+  z-index: 10;
+}
+
+.msg:hover .msg-toolbar { display: flex; }
+
+.msg-toolbar button {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 0.9rem;
+  padding: 2px 4px;
+  border-radius: 4px;
+  color: var(--muted);
+  line-height: 1;
+}
+
+.msg-toolbar button:hover { background: #40444b; color: var(--text); }
+
+/* ── Reactions ────────────────────────────────────────────────────────── */
+.react-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 5px;
+  min-height: 4px;
+}
+
+.react-btn {
+  background: #2e3035;
+  border: 1px solid #40444b;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 0.82rem;
+  cursor: pointer;
+  color: var(--text);
+  line-height: 1.4;
+}
+
+.react-btn.reacted {
+  background: #2d3360;
+  border-color: var(--brand);
+}
+
+.react-add-btn {
+  background: none;
+  border: 1px dashed #40444b;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 0.82rem;
+  cursor: pointer;
+  color: var(--muted);
+  display: none;
+  line-height: 1.4;
+}
+
+.msg:hover .react-add-btn { display: inline-block; }
+
+/* ── Emoji picker ─────────────────────────────────────────────────────── */
+.emoji-picker {
+  position: absolute;
+  background: #2b2d31;
+  border: 1px solid #40444b;
+  border-radius: 10px;
+  padding: 6px;
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  z-index: 100;
+  box-shadow: 0 4px 20px #00000055;
+}
+
+.emoji-picker button {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 1.3rem;
+  padding: 4px;
+  border-radius: 6px;
+  line-height: 1;
+}
+
+.emoji-picker button:hover { background: #40444b; }
+
+/* ── Mention highlights ───────────────────────────────────────────────── */
+.mention { color: #a8bfff; font-weight: 600; }
+.mention-self {
+  background: rgba(88, 101, 242, 0.3);
+  color: #c0cbff;
+  border-radius: 3px;
+  padding: 0 3px;
+}
+
+/* ── Edited / deleted marks ───────────────────────────────────────────── */
+.edited-mark { color: var(--muted); font-size: 0.78rem; }
+.msg-deleted .msg-body { color: var(--muted); font-style: italic; }
+
+/* ── Timestamp in message header ──────────────────────────────────────── */
+.msg-ts { color: var(--muted); font-size: 0.75rem; font-weight: 400; margin-left: 8px; }
+
+/* ── Typing indicator ─────────────────────────────────────────────────── */
+.typing-indicator {
+  padding: 2px 16px 6px;
+  min-height: 18px;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-style: italic;
+}
+
+/* ── Online dot in user list ──────────────────────────────────────────── */
+.online-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ok);
+  margin-right: 6px;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+
 @media (max-width: 1120px) {
   .app {
     grid-template-columns: 64px 220px 1fr;
