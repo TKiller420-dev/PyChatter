@@ -369,6 +369,90 @@ class ChatServer:
                     )
                     await self.send_roster(channel)
 
+                elif kind == "edit_message":
+                    if writer not in self.clients:
+                        continue
+                    client = self.clients[writer]
+                    username = client["username"]
+                    try:
+                        msg_id = int(packet.get("id", 0))
+                    except (TypeError, ValueError):
+                        continue
+                    new_content = str(packet.get("content", "")).strip()
+                    if not new_content or not msg_id:
+                        continue
+                    ok, error = self.store.edit_message(msg_id, username, new_content)
+                    if not ok:
+                        await self.send(writer, {"type": "action_error", "message": error})
+                        continue
+                    channel = self.client_channels.get(writer, "general")
+                    self.store.log_event("message_edited", actor=username, channel=channel, metadata={"id": msg_id})
+                    await self.broadcast(channel, {
+                        "type": "edited_message",
+                        "id": msg_id,
+                        "content": new_content,
+                        "edited_at": int(time.time()),
+                    })
+
+                elif kind == "delete_message":
+                    if writer not in self.clients:
+                        continue
+                    client = self.clients[writer]
+                    username = client["username"]
+                    role = client["role"]
+                    try:
+                        msg_id = int(packet.get("id", 0))
+                    except (TypeError, ValueError):
+                        continue
+                    if not msg_id:
+                        continue
+                    ok, ch, error = self.store.delete_message(msg_id, username, role)
+                    if not ok:
+                        await self.send(writer, {"type": "action_error", "message": error})
+                        continue
+                    broadcast_channel = ch or self.client_channels.get(writer, "general")
+                    self.store.log_event("message_deleted", actor=username, channel=broadcast_channel, metadata={"id": msg_id})
+                    await self.broadcast(broadcast_channel, {
+                        "type": "deleted_message",
+                        "id": msg_id,
+                    })
+
+                elif kind == "react":
+                    if writer not in self.clients:
+                        continue
+                    username = self.clients[writer]["username"]
+                    try:
+                        msg_id = int(packet.get("id", 0))
+                    except (TypeError, ValueError):
+                        continue
+                    emoji = str(packet.get("emoji", "")).strip()
+                    _ALLOWED_EMOJI = {"👍", "👎", "❤️", "😂", "😮", "😢", "🔥", "🎉"}
+                    if not msg_id or emoji not in _ALLOWED_EMOJI:
+                        continue
+                    channel = self.client_channels.get(writer, "general")
+                    reactions = self.store.toggle_reaction(msg_id, username, emoji)
+                    await self.broadcast(channel, {
+                        "type": "reaction_update",
+                        "id": msg_id,
+                        "reactions": reactions,
+                    })
+
+                elif kind == "typing":
+                    if writer not in self.clients:
+                        continue
+                    username = self.clients[writer]["username"]
+                    channel = self.client_channels.get(writer, "general")
+                    for w in list(self.channels[channel]):
+                        if w is not writer and w in self.clients:
+                            try:
+                                await self.send(w, {
+                                    "type": "typing",
+                                    "username": username,
+                                    "channel": channel,
+                                })
+                            except Exception:
+                                pass
+
         except (ConnectionError, asyncio.IncompleteReadError):
             pass
         except Exception as exc:

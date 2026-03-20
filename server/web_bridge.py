@@ -151,7 +151,8 @@ class PyChatterHandler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
         if parsed.path == "/_db":
-            self.handle_db_view(parsed)
+            # Public DB viewer removed for security hardening.
+            self.send_error(404)
             return
         super().do_GET()
 

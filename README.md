@@ -47,6 +47,8 @@ The SQLite database is at `server/chat.db` and now stores:
 - `scripts/run_server.sh`: run backend server on Linux
 - `scripts/run_client.sh`: run desktop client on Linux
 - `scripts/run_web.sh`: run web bridge host on Linux
+- `scripts/run_server_control.sh`: launch desktop server control panel
+- `client/server_control_gui.py`: Tkinter control panel for server/web start-stop-restart and logs
 - `deploy/pychatter-server.service`: systemd service for chat server
 - `deploy/pychatter-web.service`: systemd service for web bridge/static host
 - `deploy/nginx-pychatter.conf`: Nginx reverse proxy config
@@ -82,6 +84,29 @@ The SQLite database is at `server/chat.db` and now stores:
    ```
 
 5. Register/login in the auth page.
+
+## Desktop Server Control
+
+Launch the server control panel with:
+
+```bash
+bash scripts/run_server_control.sh
+```
+
+The launcher prefers the Tkinter desktop app and automatically falls back to a browser-based control panel when `tkinter` is not installed on the VPS.
+
+The control panel can:
+
+- Start, stop, and restart the TCP chat server
+- Start local-only or public web hosting modes
+- Show live combined logs
+- Display the current DB viewer URL and token
+
+There is also a desktop launcher created at:
+
+```text
+~/Desktop/PyChatter Server.desktop
+```
 
 ## Commands In Client
 

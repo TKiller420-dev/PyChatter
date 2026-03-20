@@ -97,9 +97,13 @@ function send(packet) {
 }
 
 function renderUsers() {
-  renderList(usersEl, state.users, state.selectedUser, (name) => {
-    state.selectedUser = name;
-    renderUsers();
+  usersEl.innerHTML = "";
+  state.users.forEach((name) => {
+    const li = document.createElement("li");
+    li.innerHTML = `<span class="online-dot"></span>${escapeHtml(name)}`;
+    if (name === state.selectedUser) li.classList.add("active");
+    li.addEventListener("click", () => { state.selectedUser = name; renderUsers(); });
+    usersEl.appendChild(li);
   });
 }
 
@@ -114,26 +118,185 @@ function renderList(container, items, activeValue, onClick) {
   });
 }
 
-function addMessage(who, text, type = "normal") {
+// ─── HTML helpers ─────────────────────────────────────────────────────────────
+function escapeHtml(str) {
+  const d = document.createElement("div");
+  d.appendChild(document.createTextNode(str));
+  return d.innerHTML;
+}
+
+const ALLOWED_EMOJI = ["👍", "👎", "❤️", "😂", "😮", "😢", "🔥", "🎉"];
+
+function highlightMentions(escaped) {
+  return escaped.replace(/@([\w-]+)/g, (_, name) => {
+    const cls = name === state.username ? "mention mention-self" : "mention";
+    return `<span class="${cls}">@${escapeHtml(name)}</span>`;
+  });
+}
+
+function buildReactRow(msgId, reactions) {
+  const row = document.createElement("div");
+  row.className = "react-row";
+  Object.entries(reactions || {}).forEach(([emoji, users]) => {
+    const btn = document.createElement("button");
+    btn.className = "react-btn" + (users.includes(state.username) ? " reacted" : "");
+    btn.innerHTML = `${escapeHtml(emoji)} <span>${users.length}</span>`;
+    btn.title = users.join(", ");
+    btn.addEventListener("click", () => send({ type: "react", id: msgId, emoji }));
+    row.appendChild(btn);
+  });
+  const addBtn = document.createElement("button");
+  addBtn.className = "react-add-btn";
+  addBtn.textContent = "＋";
+  addBtn.title = "Add reaction";
+  addBtn.addEventListener("click", (e) => { e.stopPropagation(); toggleEmojiPicker(msgId, addBtn); });
+  row.appendChild(addBtn);
+  return row;
+}
+
+function toggleEmojiPicker(msgId, anchor) {
+  document.querySelectorAll(".emoji-picker").forEach((p) => p.remove());
+  const picker = document.createElement("div");
+  picker.className = "emoji-picker";
+  ALLOWED_EMOJI.forEach((emo) => {
+    const btn = document.createElement("button");
+    btn.textContent = emo;
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      send({ type: "react", id: msgId, emoji: emo });
+      picker.remove();
+    });
+    picker.appendChild(btn);
+  });
+  anchor.after(picker);
+  setTimeout(() => document.addEventListener("click", () => picker.remove(), { once: true }), 0);
+}
+
+function buildMsgToolbar(msgId, author) {
+  const bar = document.createElement("div");
+  bar.className = "msg-toolbar";
+
+  const reactBtn = document.createElement("button");
+  reactBtn.textContent = "😊";
+  reactBtn.title = "React";
+  reactBtn.addEventListener("click", (e) => { e.stopPropagation(); toggleEmojiPicker(msgId, reactBtn); });
+  bar.appendChild(reactBtn);
+
+  if (author === state.username) {
+    const editBtn = document.createElement("button");
+    editBtn.textContent = "✏️";
+    editBtn.title = "Edit message";
+    editBtn.addEventListener("click", () => {
+      const box = document.getElementById(`msg-${msgId}`);
+      const bodyEl = box?.querySelector(".msg-body");
+      if (!bodyEl) return;
+      const orig = bodyEl.dataset.raw || bodyEl.textContent;
+      const newText = prompt("Edit message", orig);
+      if (!newText || newText.trim() === orig) return;
+      send({ type: "edit_message", id: msgId, content: newText.trim() });
+    });
+    bar.appendChild(editBtn);
+  }
+
+  if (author === state.username || state.role === "admin" || state.role === "mod") {
+    const delBtn = document.createElement("button");
+    delBtn.textContent = "🗑️";
+    delBtn.title = "Delete message";
+    delBtn.addEventListener("click", () => {
+      if (!confirm("Delete this message?")) return;
+      send({ type: "delete_message", id: msgId });
+    });
+    bar.appendChild(delBtn);
+  }
+  return bar;
+}
+
+function buildMessageEl(opts) {
+  const isSystem = opts.type === "system";
+  const isDeleted = !!opts.deleted;
+
   const box = document.createElement("article");
-  box.className = `msg ${type === "system" ? "system" : ""}`;
+  box.className = "msg" + (isSystem ? " system" : "") + (isDeleted ? " msg-deleted" : "");
+  if (opts.id) {
+    box.id = `msg-${opts.id}`;
+    box.dataset.msgId = opts.id;
+    box.dataset.msgAuthor = opts.author || "";
+  }
 
   const head = document.createElement("div");
   head.className = "who";
-  head.textContent = who;
+  const ts = opts.created_at
+    ? new Date(opts.created_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    : "";
+  head.innerHTML = `${escapeHtml(opts.author || "")}${ts ? ` <span class="msg-ts">${ts}</span>` : ""}`;
 
   const body = document.createElement("div");
-  body.textContent = text;
+  body.className = "msg-body";
+  body.dataset.raw = opts.content || "";
+  if (isDeleted) {
+    body.innerHTML = "<em>[deleted]</em>";
+  } else {
+    body.innerHTML = highlightMentions(escapeHtml(opts.content || ""));
+    if (opts.edited_at) {
+      const mark = document.createElement("span");
+      mark.className = "edited-mark";
+      mark.textContent = " (edited)";
+      body.appendChild(mark);
+    }
+  }
 
   box.appendChild(head);
   box.appendChild(body);
+
+  if (!isSystem && opts.id) {
+    if (!isDeleted) box.appendChild(buildMsgToolbar(opts.id, opts.author));
+    box.appendChild(buildReactRow(opts.id, opts.reactions || {}));
+  }
+  return box;
+}
+
+function addMessage(who, text, type = "normal") {
+  const box = buildMessageEl({ author: who, content: text, type });
   messagesEl.appendChild(box);
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
 function renderHistory(history) {
   messagesEl.innerHTML = "";
-  history.forEach((msg) => addMessage(msg.author || "?", msg.content || ""));
+  history.forEach((msg) => {
+    messagesEl.appendChild(buildMessageEl({
+      id: msg.id,
+      author: msg.author || "?",
+      content: msg.content || "",
+      reactions: msg.reactions || {},
+      edited_at: msg.edited_at,
+      deleted: msg.deleted,
+      created_at: msg.created_at,
+    }));
+  });
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+// ─── Typing indicator ─────────────────────────────────────────────────────────
+const typingTimers = {};
+
+function showTyping(username) {
+  if (typingTimers[username]) clearTimeout(typingTimers[username]);
+  typingTimers[username] = setTimeout(() => {
+    delete typingTimers[username];
+    updateTypingBanner();
+  }, 3000);
+  updateTypingBanner();
+}
+
+function updateTypingBanner() {
+  const el = document.getElementById("typingIndicator");
+  if (!el) return;
+  const names = Object.keys(typingTimers).filter((u) => u !== state.username);
+  if (!names.length) { el.textContent = ""; return; }
+  el.textContent = names.length === 1
+    ? `${names[0]} is typing…`
+    : `${names.join(", ")} are typing…`;
 }
 
 function handlePacket(packet) {
@@ -169,19 +332,76 @@ function handlePacket(packet) {
       state.users = packet.users || [];
       renderUsers();
       break;
-    case "message":
-      addMessage(packet.author || "?", packet.content || "");
+    case "message": {
+      const box = buildMessageEl({
+        id: packet.id,
+        author: packet.author || "?",
+        content: packet.content || "",
+        created_at: packet.created_at,
+        reactions: {},
+      });
+      messagesEl.appendChild(box);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+      // Clear typing indicator for this author
+      if (typingTimers[packet.author]) {
+        clearTimeout(typingTimers[packet.author]);
+        delete typingTimers[packet.author];
+        updateTypingBanner();
+      }
+      break;
+    }
+    case "edited_message": {
+      const box = document.getElementById(`msg-${packet.id}`);
+      if (box) {
+        const body = box.querySelector(".msg-body");
+        if (body) {
+          body.dataset.raw = packet.content || "";
+          body.innerHTML = highlightMentions(escapeHtml(packet.content || ""));
+          if (!body.querySelector(".edited-mark")) {
+            const mark = document.createElement("span");
+            mark.className = "edited-mark";
+            mark.textContent = " (edited)";
+            body.appendChild(mark);
+          }
+        }
+      }
+      break;
+    }
+    case "deleted_message": {
+      const box = document.getElementById(`msg-${packet.id}`);
+      if (box) {
+        box.classList.add("msg-deleted");
+        const body = box.querySelector(".msg-body");
+        if (body) body.innerHTML = "<em>[deleted]</em>";
+        box.querySelector(".msg-toolbar")?.remove();
+      }
+      break;
+    }
+    case "reaction_update": {
+      const box = document.getElementById(`msg-${packet.id}`);
+      if (box) {
+        const oldRow = box.querySelector(".react-row");
+        const newRow = buildReactRow(packet.id, packet.reactions || {});
+        if (oldRow) box.replaceChild(newRow, oldRow);
+        else box.appendChild(newRow);
+      }
+      break;
+    }
+    case "typing":
+      if (packet.username !== state.username && packet.channel === state.channel) {
+        showTyping(packet.username);
+      }
       break;
     case "dm": {
       const peer = packet.sender === state.username ? packet.recipient : packet.sender;
-      addMessage("DM", `with ${peer}: ${packet.content || ""}`, "system");
+      addMessage(`DM ↔ ${peer}`, packet.content || "", "system");
       break;
     }
     case "dm_history":
-      addMessage("System", `DM history with ${packet.with || "?"}`, "system");
+      addMessage("System", `── DM history with ${packet.with || "?"} ──`, "system");
       (packet.history || []).forEach((m) => {
         const peer = m.sender === state.username ? m.recipient : m.sender;
-        addMessage("DM", `with ${peer}: ${m.content || ""}`, "system");
+        addMessage(`DM ↔ ${peer}`, m.content || "", "system");
       });
       break;
     case "role_update":
@@ -215,6 +435,14 @@ inputEl.addEventListener("keydown", (ev) => {
     ev.preventDefault();
     sendBtn.click();
   }
+});
+
+// Typing indicator — send at most once every 2 seconds
+let _typingThrottle = null;
+inputEl.addEventListener("input", () => {
+  if (!state.isAuthed || _typingThrottle) return;
+  send({ type: "typing" });
+  _typingThrottle = setTimeout(() => { _typingThrottle = null; }, 2000);
 });
 
 $("newChannelBtn").addEventListener("click", () => {

@@ -115,6 +115,26 @@ class ChatStore:
             if "is_online" not in user_cols:
                 cur.execute("ALTER TABLE users ADD COLUMN is_online INTEGER NOT NULL DEFAULT 0")
 
+            # v2 migration: message editing, soft-delete, reactions.
+            cur.execute("PRAGMA table_info(channel_messages)")
+            cm_cols = {row[1] for row in cur.fetchall()}
+            if "edited_at" not in cm_cols:
+                cur.execute("ALTER TABLE channel_messages ADD COLUMN edited_at INTEGER")
+            if "deleted" not in cm_cols:
+                cur.execute("ALTER TABLE channel_messages ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0")
+
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS message_reactions (
+                    msg_id INTEGER NOT NULL,
+                    username TEXT NOT NULL,
+                    emoji TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    PRIMARY KEY (msg_id, username, emoji)
+                )
+                """
+            )
+
             self.conn.commit()
 
     def _hash_password(self, password: str, salt: bytes | None = None) -> tuple[bytes, bytes]:
@@ -361,7 +381,7 @@ class ChatStore:
             cur = self.conn.cursor()
             cur.execute(
                 """
-                SELECT id, channel, author, content, created_at
+                SELECT id, channel, author, content, created_at, edited_at, deleted
                 FROM channel_messages
                 WHERE channel = ?
                 ORDER BY created_at DESC
@@ -371,7 +391,107 @@ class ChatStore:
             )
             rows = [dict(row) for row in cur.fetchall()]
         rows.reverse()
+        if rows:
+            reactions = self.get_reactions_bulk([r["id"] for r in rows])
+            for row in rows:
+                row["reactions"] = reactions.get(row["id"], {})
         return rows
+
+    def edit_message(self, msg_id: int, author: str, new_content: str) -> tuple[bool, str]:
+        """Edit a message — only the original author may do so."""
+        with self.lock:
+            cur = self.conn.cursor()
+            cur.execute(
+                "SELECT author, deleted FROM channel_messages WHERE id = ?",
+                (msg_id,),
+            )
+            row = cur.fetchone()
+            if row is None:
+                return False, "Message not found."
+            if row["deleted"]:
+                return False, "Cannot edit a deleted message."
+            if row["author"] != author:
+                return False, "You can only edit your own messages."
+            cur.execute(
+                "UPDATE channel_messages SET content = ?, edited_at = ? WHERE id = ?",
+                (new_content, int(time.time()), msg_id),
+            )
+            self.conn.commit()
+        return True, ""
+
+    def delete_message(
+        self, msg_id: int, requester: str, requester_role: str
+    ) -> tuple[bool, str, str]:
+        """Soft-delete a message. Returns (ok, channel, error)."""
+        with self.lock:
+            cur = self.conn.cursor()
+            cur.execute(
+                "SELECT author, channel, deleted FROM channel_messages WHERE id = ?",
+                (msg_id,),
+            )
+            row = cur.fetchone()
+            if row is None:
+                return False, "", "Message not found."
+            if row["deleted"]:
+                return False, "", "Message already deleted."
+            if row["author"] != requester and requester_role not in ("mod", "admin"):
+                return False, "", "You can only delete your own messages."
+            cur.execute(
+                "UPDATE channel_messages SET deleted = 1, content = '[deleted]' WHERE id = ?",
+                (msg_id,),
+            )
+            self.conn.commit()
+            ch = row["channel"]
+        return True, ch, ""
+
+    def toggle_reaction(
+        self, msg_id: int, username: str, emoji: str
+    ) -> dict[str, list[str]]:
+        """Toggle a reaction; returns updated {emoji: [users]} for this message."""
+        with self.lock:
+            cur = self.conn.cursor()
+            cur.execute(
+                "SELECT 1 FROM message_reactions WHERE msg_id = ? AND username = ? AND emoji = ?",
+                (msg_id, username, emoji),
+            )
+            if cur.fetchone() is not None:
+                cur.execute(
+                    "DELETE FROM message_reactions WHERE msg_id = ? AND username = ? AND emoji = ?",
+                    (msg_id, username, emoji),
+                )
+            else:
+                cur.execute(
+                    "INSERT INTO message_reactions (msg_id, username, emoji, created_at) VALUES (?, ?, ?, ?)",
+                    (msg_id, username, emoji, int(time.time())),
+                )
+            self.conn.commit()
+            cur.execute(
+                "SELECT emoji, username FROM message_reactions WHERE msg_id = ?",
+                (msg_id,),
+            )
+            result: dict[str, list[str]] = {}
+            for r in cur.fetchall():
+                result.setdefault(r["emoji"], []).append(r["username"])
+        return result
+
+    def get_reactions_bulk(
+        self, msg_ids: list[int]
+    ) -> dict[int, dict[str, list[str]]]:
+        """Return {msg_id: {emoji: [users]}} for all given message IDs."""
+        if not msg_ids:
+            return {}
+        with self.lock:
+            cur = self.conn.cursor()
+            placeholders = ",".join("?" for _ in msg_ids)
+            cur.execute(
+                f"SELECT msg_id, emoji, username FROM message_reactions WHERE msg_id IN ({placeholders})",
+                msg_ids,
+            )
+            result: dict[int, dict[str, list[str]]] = {}
+            for row in cur.fetchall():
+                mid = int(row["msg_id"])
+                result.setdefault(mid, {}).setdefault(row["emoji"], []).append(row["username"])
+        return result
 
     def save_dm(self, msg_id: int, sender: str, recipient: str, content: str) -> None:
         with self.lock:
