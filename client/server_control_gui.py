@@ -1,5 +1,6 @@
 import os
 import queue
+import re
 import socket
 import sqlite3
 import signal
@@ -40,6 +41,32 @@ def _pick_open_port(preferred: int, used: set[int] | None = None) -> int:
         if _port_is_available(port):
             return port
     raise RuntimeError("No free TCP ports found")
+
+
+def _listener_pid(port: int) -> int | None:
+    try:
+        out = subprocess.check_output(
+            ["ss", "-ltnp", f"sport = :{port}"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        return None
+    match = re.search(r"pid=(\d+)", out)
+    if not match:
+        return None
+    try:
+        return int(match.group(1))
+    except ValueError:
+        return None
+
+
+def _cmdline_for_pid(pid: int) -> str:
+    try:
+        data = Path(f"/proc/{pid}/cmdline").read_bytes()
+    except Exception:
+        return ""
+    return data.replace(b"\x00", b" ").decode("utf-8", errors="replace").strip()
 
 
 class ManagedProcess:
@@ -186,7 +213,7 @@ class ServerControlGUI:
             sidebar,
             key="web-public",
             title="Public Web Host",
-            subtitle="Public UI and DB viewer (auto-selects open port)",
+            subtitle="Public UI and DB viewer on fixed ports 9010/9011",
             start_command=self.start_web_public,
             restart_command=self.restart_web_public,
             stop_command=self.stop_web_public,
@@ -720,7 +747,9 @@ class ServerControlGUI:
 
     def start_web_public(self) -> None:
         self._stop_conflicting_web(keep_public=True)
-        self.web_http_port, self.web_ws_port = self._allocate_web_ports()
+        self.web_http_port, self.web_ws_port = 9010, 9011
+        if not self._prepare_public_ports():
+            return
         self._append_log("control", f"Using public web ports http={self.web_http_port}, ws={self.web_ws_port}")
         self.web_public_process.start(
             self.log_queue,
@@ -780,6 +809,43 @@ class ServerControlGUI:
         http_port = _pick_open_port(9010)
         ws_port = _pick_open_port(9011, {http_port})
         return http_port, ws_port
+
+    def _prepare_public_ports(self) -> bool:
+        for port in (9010, 9011):
+            if self._wait_for_port_free(port, timeout=1.2):
+                continue
+            pid = _listener_pid(port)
+            if pid is None:
+                continue
+            cmdline = _cmdline_for_pid(pid)
+            if "server/web_bridge.py" in cmdline:
+                self._append_log("control", f"Port {port} busy by stale PyChatter bridge pid={pid}; stopping it")
+                try:
+                    os.kill(pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+                if not self._wait_for_port_free(port, timeout=2.0):
+                    try:
+                        os.kill(pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    if not self._wait_for_port_free(port, timeout=1.0):
+                        self._append_log("control", f"Cannot free port {port} from pid={pid}")
+                        return False
+                continue
+
+            owner = cmdline or "unknown process"
+            self._append_log("control", f"Cannot start public web: port {port} is in use by pid={pid} ({owner})")
+            return False
+        return True
+
+    def _wait_for_port_free(self, port: int, timeout: float) -> bool:
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if _port_is_available(port):
+                return True
+            time.sleep(0.1)
+        return _port_is_available(port)
 
 
 def main() -> None:

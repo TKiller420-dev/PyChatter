@@ -115,23 +115,32 @@ class ChatServer:
             return
 
         action = str(packet.get("action", "login")).strip().lower()
-        username = str(packet.get("username", "")).strip().lower()[:24]
-        password = str(packet.get("password", ""))
+        remember = bool(packet.get("remember", False))
 
-        if not username or not password:
-            await self.send(writer, {"type": "auth_error", "message": "Username and password are required."})
-            return
-
-        if action == "register":
-            ok, message = self.store.register_user(username, password)
+        if action == "token":
+            token = str(packet.get("token", "")).strip()
+            ok, username, role, error_message = self.store.authenticate_remember_token(token)
             if not ok:
-                await self.send(writer, {"type": "auth_error", "message": message})
+                await self.send(writer, {"type": "auth_error", "message": error_message})
+                return
+        else:
+            username = str(packet.get("username", "")).strip().lower()[:24]
+            password = str(packet.get("password", ""))
+
+            if not username or not password:
+                await self.send(writer, {"type": "auth_error", "message": "Username and password are required."})
                 return
 
-        ok, role, error_message = self.store.authenticate_user(username, password)
-        if not ok:
-            await self.send(writer, {"type": "auth_error", "message": error_message})
-            return
+            if action == "register":
+                ok, message = self.store.register_user(username, password)
+                if not ok:
+                    await self.send(writer, {"type": "auth_error", "message": message})
+                    return
+
+            ok, role, error_message = self.store.authenticate_user(username, password)
+            if not ok:
+                await self.send(writer, {"type": "auth_error", "message": error_message})
+                return
 
         old_writer = self.online_users.get(username)
         if old_writer and old_writer is not writer:
@@ -148,7 +157,10 @@ class ChatServer:
         self.online_users[username] = writer
         self.store.log_event("user_authenticated", actor=username, channel=channel, metadata={"action": action})
 
-        await self.send(writer, {"type": "auth_ok", "username": username, "role": role})
+        auth_ok_packet = {"type": "auth_ok", "username": username, "role": role}
+        if action == "token" or remember:
+            auth_ok_packet["remember_token"] = self.store.create_remember_token(username)
+        await self.send(writer, auth_ok_packet)
         await self.send_channel_context(writer, channel, switched=False)
         await self.broadcast(
             channel,
@@ -182,6 +194,15 @@ class ChatServer:
 
                 if kind == "auth":
                     await self.handle_auth(writer, packet)
+
+                elif kind == "logout":
+                    token = str(packet.get("remember_token", "")).strip()
+                    if token:
+                        self.store.revoke_remember_token(token)
+                    if writer in self.clients:
+                        await self.send(writer, {"type": "logged_out"})
+                    self.disconnect(writer)
+                    break
 
                 elif kind == "switch_channel":
                     if writer not in self.clients:
