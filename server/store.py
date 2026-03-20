@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import secrets
 import sqlite3
 import threading
 import time
@@ -101,6 +102,20 @@ class ChatStore:
                 """
             )
             cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS remember_tokens (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username TEXT NOT NULL,
+                    token_hash TEXT NOT NULL UNIQUE,
+                    created_at INTEGER NOT NULL,
+                    expires_at INTEGER NOT NULL,
+                    last_used_at INTEGER,
+                    revoked_at INTEGER,
+                    FOREIGN KEY(username) REFERENCES users(username)
+                )
+                """
+            )
+            cur.execute(
                 "INSERT OR IGNORE INTO channels (name, created_at) VALUES (?, ?)",
                 ("general", int(time.time())),
             )
@@ -142,6 +157,9 @@ class ChatStore:
             salt = os.urandom(16)
         digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 120_000)
         return salt, digest
+
+    def _hash_token(self, token: str) -> str:
+        return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
     def register_user(self, username: str, password: str) -> tuple[bool, str]:
         username = username.strip().lower()
@@ -196,6 +214,78 @@ class ChatStore:
             self.conn.commit()
 
             return True, row["role"], ""
+
+    def create_remember_token(self, username: str, ttl_days: int = 30) -> str:
+        username = username.strip().lower()
+        now = int(time.time())
+        token = secrets.token_urlsafe(32)
+        token_hash = self._hash_token(token)
+        expires_at = now + max(1, ttl_days) * 24 * 60 * 60
+        with self.lock:
+            cur = self.conn.cursor()
+            cur.execute(
+                """
+                INSERT INTO remember_tokens (username, token_hash, created_at, expires_at, last_used_at, revoked_at)
+                VALUES (?, ?, ?, ?, ?, NULL)
+                """,
+                (username, token_hash, now, expires_at, now),
+            )
+            self.conn.commit()
+        return token
+
+    def authenticate_remember_token(self, token: str) -> tuple[bool, str, str, str]:
+        token = token.strip()
+        if not token:
+            return False, "", "", "Missing remember token."
+        token_hash = self._hash_token(token)
+        now = int(time.time())
+        with self.lock:
+            cur = self.conn.cursor()
+            cur.execute(
+                """
+                SELECT rt.id AS token_id, rt.username AS username, u.role AS role, rt.expires_at AS expires_at
+                FROM remember_tokens rt
+                JOIN users u ON u.username = rt.username
+                WHERE rt.token_hash = ? AND rt.revoked_at IS NULL
+                """,
+                (token_hash,),
+            )
+            row = cur.fetchone()
+            if row is None:
+                return False, "", "", "Session expired. Please sign in again."
+            if int(row["expires_at"]) < now:
+                cur.execute(
+                    "UPDATE remember_tokens SET revoked_at = ? WHERE id = ?",
+                    (now, int(row["token_id"])),
+                )
+                self.conn.commit()
+                return False, "", "", "Session expired. Please sign in again."
+
+            username = str(row["username"])
+            role = str(row["role"])
+            cur.execute(
+                "UPDATE remember_tokens SET last_used_at = ? WHERE id = ?",
+                (now, int(row["token_id"])),
+            )
+            cur.execute(
+                "UPDATE users SET last_login_at = ?, last_seen_at = ?, is_online = 1 WHERE username = ?",
+                (now, now, username),
+            )
+            self.conn.commit()
+            return True, username, role, ""
+
+    def revoke_remember_token(self, token: str) -> None:
+        token = token.strip()
+        if not token:
+            return
+        token_hash = self._hash_token(token)
+        with self.lock:
+            cur = self.conn.cursor()
+            cur.execute(
+                "UPDATE remember_tokens SET revoked_at = ? WHERE token_hash = ? AND revoked_at IS NULL",
+                (int(time.time()), token_hash),
+            )
+            self.conn.commit()
 
     def set_user_presence(self, username: str, is_online: bool) -> None:
         username = username.strip().lower()
@@ -334,6 +424,10 @@ class ChatStore:
                 cur.execute("UPDATE user_sessions SET username = ? WHERE username = ?", (new_username, old_username))
                 cur.execute(
                     "UPDATE channel_memberships SET username = ? WHERE username = ?",
+                    (new_username, old_username),
+                )
+                cur.execute(
+                    "UPDATE remember_tokens SET username = ? WHERE username = ?",
                     (new_username, old_username),
                 )
                 cur.execute("COMMIT")

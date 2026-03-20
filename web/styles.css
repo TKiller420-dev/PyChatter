@@ -129,6 +129,20 @@ body {
   border-color: var(--brand-2);
 }
 
+.remember-row {
+  display: flex !important;
+  align-items: center;
+  gap: 8px;
+  color: #c6cae2;
+  font-size: 0.9rem;
+}
+
+.remember-row input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+
 .auth-status {
   margin-top: 8px;
   min-height: 1.2rem;

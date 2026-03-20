@@ -1,6 +1,8 @@
 const state = {
   ws: null,
   username: "",
+  rememberToken: "",
+  attemptedTokenAuth: false,
   role: "member",
   channel: "general",
   channels: [],
@@ -31,6 +33,54 @@ const authSubmitBtn = $("authSubmitBtn");
 const showLoginBtn = $("showLoginBtn");
 const showRegisterBtn = $("showRegisterBtn");
 const selfUser = $("selfUser");
+const rememberMe = $("rememberMe");
+
+const REMEMBER_KEY = "pychatter.remember.v1";
+
+function loadRemember() {
+  try {
+    const raw = localStorage.getItem(REMEMBER_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    if (typeof parsed.username !== "string" || typeof parsed.token !== "string") return null;
+    return {
+      username: parsed.username.trim().toLowerCase(),
+      token: parsed.token.trim(),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function saveRemember(username, token) {
+  const payload = {
+    username: username.trim().toLowerCase(),
+    token: token.trim(),
+  };
+  localStorage.setItem(REMEMBER_KEY, JSON.stringify(payload));
+  state.rememberToken = payload.token;
+}
+
+function clearRemember() {
+  localStorage.removeItem(REMEMBER_KEY);
+  state.rememberToken = "";
+}
+
+function attemptTokenLogin() {
+  const remembered = loadRemember();
+  if (!remembered) return false;
+  if (!remembered.token || !remembered.username) {
+    clearRemember();
+    return false;
+  }
+  state.attemptedTokenAuth = true;
+  state.rememberToken = remembered.token;
+  $("usernameInput").value = remembered.username;
+  authStatus.textContent = "Signing in automatically...";
+  send({ type: "auth", action: "token", token: remembered.token });
+  return true;
+}
 
 function setAuthMode(mode) {
   state.authMode = mode;
@@ -69,8 +119,10 @@ function connectSocket() {
       opened = true;
       state.ws = ws;
       statusText.textContent = "Connected";
-      setAuthenticated(false);
-      setAuthMode("login");
+      if (!attemptTokenLogin()) {
+        setAuthenticated(false);
+        setAuthMode("login");
+      }
     });
 
     ws.addEventListener("close", () => {
@@ -304,6 +356,12 @@ function handlePacket(packet) {
     case "auth_ok":
       state.username = packet.username || state.username;
       state.role = packet.role || "member";
+      state.attemptedTokenAuth = false;
+      if (packet.remember_token) {
+        saveRemember(state.username, packet.remember_token);
+      } else if (!rememberMe.checked) {
+        clearRemember();
+      }
       roleBadge.textContent = state.role;
       selfUser.textContent = state.username;
       setAuthenticated(true);
@@ -311,7 +369,18 @@ function handlePacket(packet) {
       addMessage("System", `Logged in as ${state.username}`, "system");
       break;
     case "auth_error":
+      if (state.attemptedTokenAuth) {
+        clearRemember();
+        state.attemptedTokenAuth = false;
+        setAuthenticated(false);
+        setAuthMode("login");
+      }
       authStatus.textContent = packet.message || "Authentication failed";
+      break;
+    case "logged_out":
+      setAuthenticated(false);
+      setAuthMode("login");
+      authStatus.textContent = "Signed out.";
       break;
     case "action_error":
       addMessage("System", packet.message || "Action failed", "system");
@@ -508,17 +577,37 @@ $("promoteBtn").addEventListener("click", () => {
   send({ type: "promote", username: state.selectedUser.toLowerCase(), role: normalized });
 });
 
+$("logoutBtn").addEventListener("click", () => {
+  if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
+    clearRemember();
+    setAuthenticated(false);
+    setAuthMode("login");
+    return;
+  }
+  send({ type: "logout", remember_token: state.rememberToken });
+  clearRemember();
+});
+
 authForm.addEventListener("submit", (event) => {
   event.preventDefault();
   const username = $("usernameInput").value.trim().toLowerCase();
   const password = $("passwordInput").value;
 
   if (!username || !password) return;
+  state.attemptedTokenAuth = false;
   authStatus.textContent = "";
-  send({ type: "auth", action: state.authMode, username, password });
+  send({ type: "auth", action: state.authMode, username, password, remember: rememberMe.checked });
 });
 
 showLoginBtn.addEventListener("click", () => setAuthMode("login"));
 showRegisterBtn.addEventListener("click", () => setAuthMode("register"));
+
+{
+  const remembered = loadRemember();
+  if (remembered?.username) {
+    $("usernameInput").value = remembered.username;
+    rememberMe.checked = true;
+  }
+}
 
 connectSocket();

@@ -28,6 +28,10 @@
           Password
           <input id="passwordInput" type="password" required minlength="6" autocomplete="current-password">
         </label>
+        <label class="remember-row">
+          <input id="rememberMe" type="checkbox" checked>
+          <span>Remember me on this device</span>
+        </label>
         <button id="authSubmitBtn" type="submit" class="btn primary">Sign In</button>
       </form>
       <p id="authStatus" class="auth-status"></p>
@@ -92,6 +96,7 @@
           <button id="dmBtn" class="btn ghost" type="button">Message User</button>
           <button id="dmHistoryBtn" class="btn ghost" type="button">View DM History</button>
           <button id="promoteBtn" class="btn ghost" type="button">Set Member Role</button>
+          <button id="logoutBtn" class="btn ghost" type="button">Log Out</button>
         </div>
       </section>
     </aside>
