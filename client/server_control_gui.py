@@ -1,5 +1,6 @@
 import os
 import queue
+import socket
 import sqlite3
 import signal
 import subprocess
@@ -19,32 +20,26 @@ RUN_WEB_PUBLIC = ROOT_DIR / "scripts" / "run_web_public.sh"
 TOKEN_FILE = ROOT_DIR / ".db_view_token"
 DB_PATH = ROOT_DIR / "server" / "chat.db"
 
+def _port_is_available(port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.bind(("127.0.0.1", port))
+        except OSError:
+            return False
+    return True
 
-# Ports each managed process binds to — used for pre-start eviction.
-_PORT_MAP: dict[str, list[int]] = {
-    "server": [8765],
-    "web-local": [9010, 9011],
-    "web-public": [9010, 9011],
-}
 
-
-def _evict_port(port: int) -> list[int]:
-    """Kill any foreign process listening on *port*. Returns killed PIDs."""
-    killed: list[int] = []
-    try:
-        import subprocess as _sp
-        out = _sp.check_output(["ss", "-ltnp", f"sport = :{port}"], text=True)
-        for part in out.split():
-            if part.startswith("pid="):
-                try:
-                    pid = int(part[4:].rstrip(","))
-                    os.kill(pid, signal.SIGTERM)
-                    killed.append(pid)
-                except (ValueError, ProcessLookupError, PermissionError):
-                    pass
-    except Exception:
-        pass
-    return killed
+def _pick_open_port(preferred: int, used: set[int] | None = None) -> int:
+    used = used or set()
+    if preferred not in used and _port_is_available(preferred):
+        return preferred
+    for port in range(10000, 65535):
+        if port in used:
+            continue
+        if _port_is_available(port):
+            return port
+    raise RuntimeError("No free TCP ports found")
 
 
 class ManagedProcess:
@@ -58,17 +53,13 @@ class ManagedProcess:
     def is_running(self) -> bool:
         return self.process is not None and self.process.poll() is None
 
-    def start(self, log_queue: queue.Queue[tuple[str, str]]) -> None:
+    def start(self, log_queue: queue.Queue[tuple[str, str]], extra_env: dict[str, str] | None = None) -> None:
         if self.is_running():
             return
-        for port in _PORT_MAP.get(self.name, []):
-            pids = _evict_port(port)
-            for pid in pids:
-                log_queue.put((self.name, f"evicted stale process pid={pid} from port {port}"))
-        if _PORT_MAP.get(self.name):
-            time.sleep(0.3)
         env = os.environ.copy()
         env.update(self.env)
+        if extra_env:
+            env.update(extra_env)
         self.process = subprocess.Popen(
             self.command,
             cwd=str(ROOT_DIR),
@@ -128,7 +119,9 @@ class ServerControlGUI:
 
         self.status_labels: dict[str, tk.Label] = {}
         self.token_var = tk.StringVar(value=self._read_token())
-        self.public_url_var = tk.StringVar(value="http://127.0.0.1:9010")
+        self.web_http_port = int(os.environ.get("PYCHATTER_WEB_PORT", "9010"))
+        self.web_ws_port = int(os.environ.get("PYCHATTER_WS_PORT", "9011"))
+        self.public_url_var = tk.StringVar(value=f"http://127.0.0.1:{self.web_http_port}")
         self.db_url_var = tk.StringVar(value=self._build_db_url("127.0.0.1"))
         self.db_limit_var = tk.StringVar(value="100")
         self.db_offset_var = tk.StringVar(value="0")
@@ -183,7 +176,7 @@ class ServerControlGUI:
             sidebar,
             key="web-local",
             title="Web Host",
-            subtitle="Local-only UI on 127.0.0.1:9010",
+            subtitle="Local-only UI (auto-selects open port)",
             start_command=self.start_web_local,
             restart_command=self.restart_web_local,
             stop_command=self.stop_web_local,
@@ -192,7 +185,7 @@ class ServerControlGUI:
             sidebar,
             key="web-public",
             title="Public Web Host",
-            subtitle="Public UI and DB viewer on 0.0.0.0:9010",
+            subtitle="Public UI and DB viewer (auto-selects open port)",
             start_command=self.start_web_public,
             restart_command=self.restart_web_public,
             stop_command=self.stop_web_public,
@@ -667,14 +660,14 @@ class ServerControlGUI:
 
     def _current_web_url(self) -> str:
         if self.web_public_process.is_running():
-            return f"http://{self._resolve_public_host()}:9010"
-        return "http://127.0.0.1:9010"
+            return f"http://{self._resolve_public_host()}:{self.web_http_port}"
+        return f"http://127.0.0.1:{self.web_http_port}"
 
     def _build_db_url(self, host: str) -> str:
         token = self._read_token()
         if not token:
             return "Start public web host to create a token"
-        return f"http://{host}:9010/_db?token={token}"
+        return f"http://{host}:{self.web_http_port}/_db?token={token}"
 
     def _resolve_public_host(self) -> str:
         return os.environ.get("PYCHATTER_PUBLIC_HOST", "127.0.0.1")
@@ -697,7 +690,15 @@ class ServerControlGUI:
 
     def start_web_local(self) -> None:
         self._stop_conflicting_web(keep_public=False)
-        self.web_local_process.start(self.log_queue)
+        self.web_http_port, self.web_ws_port = self._allocate_web_ports()
+        self._append_log("control", f"Using web ports http={self.web_http_port}, ws={self.web_ws_port}")
+        self.web_local_process.start(
+            self.log_queue,
+            {
+                "PYCHATTER_WEB_PORT": str(self.web_http_port),
+                "PYCHATTER_WS_PORT": str(self.web_ws_port),
+            },
+        )
 
     def restart_web_local(self) -> None:
         self.stop_web_local()
@@ -708,7 +709,15 @@ class ServerControlGUI:
 
     def start_web_public(self) -> None:
         self._stop_conflicting_web(keep_public=True)
-        self.web_public_process.start(self.log_queue)
+        self.web_http_port, self.web_ws_port = self._allocate_web_ports()
+        self._append_log("control", f"Using public web ports http={self.web_http_port}, ws={self.web_ws_port}")
+        self.web_public_process.start(
+            self.log_queue,
+            {
+                "PYCHATTER_WEB_PORT": str(self.web_http_port),
+                "PYCHATTER_WS_PORT": str(self.web_ws_port),
+            },
+        )
 
     def restart_web_public(self) -> None:
         self.stop_web_public()
@@ -754,6 +763,11 @@ class ServerControlGUI:
                 self.root.after(800, self.root.destroy)
                 return
         self.root.destroy()
+
+    def _allocate_web_ports(self) -> tuple[int, int]:
+        http_port = _pick_open_port(9010)
+        ws_port = _pick_open_port(9011, {http_port})
+        return http_port, ws_port
 
 
 def main() -> None:

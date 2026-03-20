@@ -7,8 +7,8 @@ cd "$ROOT_DIR"
 export PYCHATTER_WEB_HOST=0.0.0.0
 export PYCHATTER_WS_HOST=0.0.0.0
 
-HTTP_PORT=9010
-WS_PORT=9011
+HTTP_PORT="${PYCHATTER_WEB_PORT:-9010}"
+WS_PORT="${PYCHATTER_WS_PORT:-9011}"
 if ss -ltn "sport = :$HTTP_PORT" 2>/dev/null | grep -q LISTEN; then
   echo "Cannot start web-public bridge: HTTP port $HTTP_PORT is already in use."
   echo "Stop the running bridge first (for example: pkill -f 'server/web_bridge.py')."
