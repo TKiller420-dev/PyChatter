@@ -24,6 +24,8 @@ HTTP_HOST = os.environ.get("PYCHATTER_WEB_HOST", "127.0.0.1")
 HTTP_PORT = int(os.environ.get("PYCHATTER_WEB_PORT", "9010"))
 WS_HOST = os.environ.get("PYCHATTER_WS_HOST", "127.0.0.1")
 WS_PORT = int(os.environ.get("PYCHATTER_WS_PORT", "9011"))
+BACKEND_HOST = os.environ.get("PYCHATTER_BACKEND_HOST", "127.0.0.1")
+BACKEND_PORT = int(os.environ.get("PYCHATTER_BACKEND_PORT", "8765"))
 DB_VIEW_TOKEN = os.environ.get("PYCHATTER_DB_VIEW_TOKEN", "")
 DB_VIEW_MAX_LIMIT = max(1, int(os.environ.get("PYCHATTER_DB_VIEW_MAX_LIMIT", "100")))
 
@@ -221,7 +223,7 @@ async def tcp_to_browser(ws: Any, tcp_reader: asyncio.StreamReader):
 
 async def ws_handler(ws: Any):
     try:
-        reader, writer = await asyncio.open_connection("127.0.0.1", 8765)
+        reader, writer = await asyncio.open_connection(BACKEND_HOST, BACKEND_PORT)
     except OSError as exc:
         await ws.send(f'{{"type":"auth_error","message":"Cannot reach backend server: {exc}"}}')
         await ws.close()
@@ -252,6 +254,7 @@ async def main() -> None:
         raise
     print(f"Web UI: http://{HTTP_HOST}:{HTTP_PORT}")
     print(f"WebSocket bridge: ws://{WS_HOST}:{WS_PORT}/ws")
+    print(f"Backend target: {BACKEND_HOST}:{BACKEND_PORT}")
     try:
         async with websockets.serve(
             ws_handler,

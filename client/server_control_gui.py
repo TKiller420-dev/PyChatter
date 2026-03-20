@@ -119,6 +119,7 @@ class ServerControlGUI:
 
         self.status_labels: dict[str, tk.Label] = {}
         self.token_var = tk.StringVar(value=self._read_token())
+        self.server_port = int(os.environ.get("PYCHATTER_PORT", "8765"))
         self.web_http_port = int(os.environ.get("PYCHATTER_WEB_PORT", "9010"))
         self.web_ws_port = int(os.environ.get("PYCHATTER_WS_PORT", "9011"))
         self.public_url_var = tk.StringVar(value=f"http://127.0.0.1:{self.web_http_port}")
@@ -167,7 +168,7 @@ class ServerControlGUI:
             sidebar,
             key="server",
             title="Chat Server",
-            subtitle="TCP backend on 127.0.0.1:8765",
+            subtitle="TCP backend (auto-selects open port)",
             start_command=self.start_server,
             restart_command=self.restart_server,
             stop_command=self.stop_server,
@@ -679,7 +680,16 @@ class ServerControlGUI:
             self.web_public_process.stop(self.log_queue)
 
     def start_server(self) -> None:
-        self.server_process.start(self.log_queue)
+        if self.server_process.is_running():
+            return
+        self.server_port = _pick_open_port(8765)
+        self._append_log("control", f"Using server port {self.server_port}")
+        self.server_process.start(
+            self.log_queue,
+            {
+                "PYCHATTER_PORT": str(self.server_port),
+            },
+        )
 
     def restart_server(self) -> None:
         self.server_process.stop(self.log_queue)
@@ -697,6 +707,7 @@ class ServerControlGUI:
             {
                 "PYCHATTER_WEB_PORT": str(self.web_http_port),
                 "PYCHATTER_WS_PORT": str(self.web_ws_port),
+                "PYCHATTER_BACKEND_PORT": str(self.server_port),
             },
         )
 
@@ -716,6 +727,7 @@ class ServerControlGUI:
             {
                 "PYCHATTER_WEB_PORT": str(self.web_http_port),
                 "PYCHATTER_WS_PORT": str(self.web_ws_port),
+                "PYCHATTER_BACKEND_PORT": str(self.server_port),
             },
         )
 
