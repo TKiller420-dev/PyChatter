@@ -154,6 +154,7 @@ The SQLite database is at `server/chat.db` and now stores:
 
    ```bash
    sudo cp deploy/nginx-pychatter.conf /etc/nginx/conf.d/pychatter.conf
+   sudo setsebool -P httpd_can_network_connect 1
    sudo nginx -t
    sudo systemctl enable --now nginx
    sudo systemctl restart nginx
@@ -181,6 +182,34 @@ The SQLite database is at `server/chat.db` and now stores:
    ```
    http://YOUR_VPS_IP
    ```
+
+Temporary fallback without systemd/Nginx:
+
+If you cannot complete the root-owned setup yet, you can still expose the web client directly:
+
+```bash
+cd ~/Desktop/PyChatter
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+firewall-cmd --add-port=9010/tcp --permanent
+firewall-cmd --add-port=9011/tcp --permanent
+firewall-cmd --reload
+bash scripts/run_server.sh
+bash scripts/run_web_public.sh
+```
+
+Then open:
+
+```
+http://YOUR_VPS_IP:9010
+```
+
+Read-only DB viewer:
+
+- `scripts/run_web_public.sh` creates a token file at `.db_view_token` on first start.
+- Open `http://YOUR_VPS_IP:9010/_db?token=YOUR_TOKEN` to browse tables.
+- The viewer is read-only and disabled unless `PYCHATTER_DB_VIEW_TOKEN` is set.
 
 Optional TLS (recommended):
 

@@ -9,7 +9,7 @@ User=pychatter
 WorkingDirectory=/opt/pychatter
 Environment=PYCHATTER_HOST=127.0.0.1
 Environment=PYCHATTER_PORT=8765
-ExecStart=/opt/pychatter/scripts/run_server.sh
+ExecStart=/usr/bin/bash /opt/pychatter/scripts/run_server.sh
 Restart=always
 RestartSec=2
 

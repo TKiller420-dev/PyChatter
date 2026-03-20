@@ -8,7 +8,7 @@ Requires=pychatter-server.service
 Type=simple
 User=pychatter
 WorkingDirectory=/opt/pychatter
-ExecStart=/opt/pychatter/scripts/run_web.sh
+ExecStart=/usr/bin/bash /opt/pychatter/scripts/run_web.sh
 Restart=always
 RestartSec=2
 
