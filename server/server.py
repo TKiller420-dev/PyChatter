@@ -467,7 +467,16 @@ async def main() -> None:
     port = int(os.getenv("PYCHATTER_PORT", "8765"))
     server = ChatServer()
 
-    srv = await asyncio.start_server(server.handle_client, host, port)
+    try:
+        srv = await asyncio.start_server(server.handle_client, host, port)
+    except OSError as exc:
+        if exc.errno == 98:
+            print(
+                f"Cannot start PyChatter server on {host}:{port}: address already in use. "
+                "Another instance is likely already running."
+            )
+            return
+        raise
     print(f"PyChatter server listening on {host}:{port}")
 
     async with srv:

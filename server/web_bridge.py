@@ -240,16 +240,34 @@ async def ws_handler(ws: Any):
 
 
 async def main() -> None:
-    start_http_server()
+    try:
+        start_http_server()
+    except OSError as exc:
+        if exc.errno == 98:
+            print(
+                f"Cannot start web UI on {HTTP_HOST}:{HTTP_PORT}: address already in use. "
+                "Another instance is likely already running."
+            )
+            return
+        raise
     print(f"Web UI: http://{HTTP_HOST}:{HTTP_PORT}")
     print(f"WebSocket bridge: ws://{WS_HOST}:{WS_PORT}/ws")
-    async with websockets.serve(
-        ws_handler,
-        WS_HOST,
-        WS_PORT,
-        max_size=2**20,
-    ):
-        await asyncio.Future()
+    try:
+        async with websockets.serve(
+            ws_handler,
+            WS_HOST,
+            WS_PORT,
+            max_size=2**20,
+        ):
+            await asyncio.Future()
+    except OSError as exc:
+        if exc.errno == 98:
+            print(
+                f"Cannot start WebSocket bridge on {WS_HOST}:{WS_PORT}: address already in use. "
+                "Another instance is likely already running."
+            )
+            return
+        raise
 
 
 if __name__ == "__main__":
