@@ -21,9 +21,9 @@ from shared.protocol import decode_packet, encode_packet
 WEB_ROOT = pathlib.Path(__file__).resolve().parent.parent / "web"
 DB_PATH = pathlib.Path(__file__).resolve().parent / "chat.db"
 HTTP_HOST = os.environ.get("PYCHATTER_WEB_HOST", "127.0.0.1")
-HTTP_PORT = 9010
+HTTP_PORT = int(os.environ.get("PYCHATTER_WEB_PORT", "9010"))
 WS_HOST = os.environ.get("PYCHATTER_WS_HOST", "127.0.0.1")
-WS_PORT = 9011
+WS_PORT = int(os.environ.get("PYCHATTER_WS_PORT", "9011"))
 DB_VIEW_TOKEN = os.environ.get("PYCHATTER_DB_VIEW_TOKEN", "")
 DB_VIEW_MAX_LIMIT = max(1, int(os.environ.get("PYCHATTER_DB_VIEW_MAX_LIMIT", "100")))
 
