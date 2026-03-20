@@ -1,11 +1,15 @@
 import asyncio
 import functools
+import html
 import http.server
+import json
 import os
 import pathlib
+import sqlite3
 import sys
 import threading
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 import websockets
 
@@ -15,13 +19,174 @@ from shared.protocol import decode_packet, encode_packet
 
 
 WEB_ROOT = pathlib.Path(__file__).resolve().parent.parent / "web"
+DB_PATH = pathlib.Path(__file__).resolve().parent / "chat.db"
+HTTP_HOST = os.environ.get("PYCHATTER_WEB_HOST", "127.0.0.1")
 HTTP_PORT = 9010
+WS_HOST = os.environ.get("PYCHATTER_WS_HOST", "127.0.0.1")
 WS_PORT = 9011
+DB_VIEW_TOKEN = os.environ.get("PYCHATTER_DB_VIEW_TOKEN", "")
+DB_VIEW_MAX_LIMIT = max(1, int(os.environ.get("PYCHATTER_DB_VIEW_MAX_LIMIT", "100")))
+
+
+def load_db_tables() -> list[str]:
+    with sqlite3.connect(DB_PATH) as conn:
+        rows = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+        ).fetchall()
+    return [row[0] for row in rows]
+
+
+def quote_identifier(name: str) -> str:
+    return '"' + name.replace('"', '""') + '"'
+
+
+def fetch_db_table(table: str, limit: int) -> tuple[list[str], list[sqlite3.Row]]:
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        columns = [
+            row[1]
+            for row in conn.execute(f"PRAGMA table_info({quote_identifier(table)})").fetchall()
+        ]
+        rows = conn.execute(
+            f"SELECT * FROM {quote_identifier(table)} ORDER BY 1 DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    return columns, rows
+
+
+def render_db_viewer(selected_table: str, token: str, limit: int) -> str:
+    tables = load_db_tables()
+    if not tables:
+        body = "<p>No tables found.</p>"
+        selected_table = ""
+    else:
+        if selected_table not in tables:
+            selected_table = tables[0]
+        columns, rows = fetch_db_table(selected_table, limit)
+        header_cells = "".join(f"<th>{html.escape(col)}</th>" for col in columns)
+        row_html = []
+        for row in rows:
+            cells = "".join(
+                f"<td><pre>{html.escape(json.dumps(row[col], ensure_ascii=True, default=str, indent=2) if isinstance(row[col], (dict, list)) else str(row[col]))}</pre></td>"
+                for col in columns
+            )
+            row_html.append(f"<tr>{cells}</tr>")
+        rows_markup = "\n".join(row_html) or f"<tr><td colspan=\"{max(1, len(columns))}\">No rows yet.</td></tr>"
+        body = f"""
+        <div class=\"meta\">Showing up to {limit} rows from <strong>{html.escape(selected_table)}</strong></div>
+        <table>
+          <thead><tr>{header_cells}</tr></thead>
+          <tbody>{rows_markup}</tbody>
+        </table>
+        """
+
+    nav_links = "\n".join(
+        f'<a class="table-link{" active" if table == selected_table else ""}" href="/_db?token={html.escape(token)}&table={html.escape(table)}&limit={limit}">{html.escape(table)}</a>'
+        for table in tables
+    ) or "<span class=\"table-link active\">No tables</span>"
+
+    return f"""<!doctype html>
+<html lang=\"en\">
+<head>
+  <meta charset=\"utf-8\">
+  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">
+  <title>PyChatter DB Viewer</title>
+  <style>
+    :root {{
+      --bg: #0f172a;
+      --panel: #111827;
+      --line: #253047;
+      --text: #e5e7eb;
+      --muted: #94a3b8;
+      --accent: #22c55e;
+      --accent-2: #16a34a;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{ margin: 0; font-family: "Trebuchet MS", "Segoe UI", sans-serif; background: linear-gradient(160deg, #09101f, #0f172a 40%, #132033); color: var(--text); }}
+    .layout {{ min-height: 100vh; display: grid; grid-template-columns: 260px 1fr; }}
+    .sidebar {{ padding: 20px; border-right: 1px solid var(--line); background: rgba(8, 15, 29, 0.85); }}
+    .content {{ padding: 20px; overflow-x: auto; }}
+    h1 {{ margin: 0 0 10px; font-size: 1.5rem; }}
+    p, .meta {{ color: var(--muted); }}
+    .table-list {{ display: grid; gap: 8px; margin-top: 18px; }}
+    .table-link {{ display: block; color: var(--text); text-decoration: none; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: rgba(17, 24, 39, 0.75); }}
+    .table-link.active {{ border-color: var(--accent); background: rgba(34, 197, 94, 0.12); }}
+    .toolbar {{ display: flex; gap: 12px; align-items: center; margin: 0 0 16px; flex-wrap: wrap; }}
+    .toolbar input {{ border: 1px solid var(--line); border-radius: 10px; background: #0b1220; color: var(--text); padding: 10px 12px; width: 110px; }}
+    .toolbar button {{ border: 0; border-radius: 10px; background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #06220f; font-weight: 800; padding: 10px 14px; cursor: pointer; }}
+    table {{ width: 100%; border-collapse: collapse; min-width: 700px; background: rgba(10, 18, 32, 0.88); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }}
+    th, td {{ vertical-align: top; padding: 10px 12px; border-bottom: 1px solid var(--line); text-align: left; }}
+    th {{ position: sticky; top: 0; background: #122033; }}
+    pre {{ margin: 0; white-space: pre-wrap; word-break: break-word; font: inherit; }}
+    code {{ color: #bfdbfe; }}
+    @media (max-width: 900px) {{ .layout {{ grid-template-columns: 1fr; }} .sidebar {{ border-right: 0; border-bottom: 1px solid var(--line); }} }}
+  </style>
+</head>
+<body>
+  <div class=\"layout\">
+    <aside class=\"sidebar\">
+      <h1>PyChatter DB</h1>
+      <p>Read-only SQLite viewer for <code>{html.escape(str(DB_PATH))}</code>.</p>
+      <div class=\"table-list\">{nav_links}</div>
+    </aside>
+    <main class=\"content\">
+      <form class=\"toolbar\" method=\"get\" action=\"/_db\">
+        <input type=\"hidden\" name=\"token\" value=\"{html.escape(token)}\">
+        <input type=\"hidden\" name=\"table\" value=\"{html.escape(selected_table)}\">
+        <label>Rows <input type=\"number\" min=\"1\" max=\"{DB_VIEW_MAX_LIMIT}\" name=\"limit\" value=\"{limit}\"></label>
+        <button type=\"submit\">Reload</button>
+      </form>
+      {body}
+    </main>
+  </div>
+</body>
+</html>
+"""
+
+
+class PyChatterHandler(http.server.SimpleHTTPRequestHandler):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, directory=str(WEB_ROOT), **kwargs)
+
+    def do_GET(self) -> None:
+        parsed = urlparse(self.path)
+        if parsed.path == "/_db":
+            self.handle_db_view(parsed)
+            return
+        super().do_GET()
+
+    def handle_db_view(self, parsed: Any) -> None:
+        if not DB_VIEW_TOKEN:
+            self.send_error(404)
+            return
+
+        params = parse_qs(parsed.query)
+        token = params.get("token", [""])[0]
+        if token != DB_VIEW_TOKEN:
+            self.send_response(403)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(b"Forbidden")
+            return
+
+        table = params.get("table", [""])[0]
+        try:
+            limit = int(params.get("limit", [str(DB_VIEW_MAX_LIMIT)])[0])
+        except ValueError:
+            limit = DB_VIEW_MAX_LIMIT
+        limit = max(1, min(limit, DB_VIEW_MAX_LIMIT))
+
+        page = render_db_viewer(table, token, limit).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(page)))
+        self.end_headers()
+        self.wfile.write(page)
 
 
 def start_http_server() -> None:
-    handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(WEB_ROOT))
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", HTTP_PORT), handler)
+    handler = functools.partial(PyChatterHandler)
+    server = http.server.ThreadingHTTPServer((HTTP_HOST, HTTP_PORT), handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
 
 
@@ -75,11 +240,11 @@ async def ws_handler(ws: Any):
 
 async def main() -> None:
     start_http_server()
-    print(f"Web UI: http://127.0.0.1:{HTTP_PORT}")
-    print(f"WebSocket bridge: ws://127.0.0.1:{WS_PORT}/ws")
+    print(f"Web UI: http://{HTTP_HOST}:{HTTP_PORT}")
+    print(f"WebSocket bridge: ws://{WS_HOST}:{WS_PORT}/ws")
     async with websockets.serve(
         ws_handler,
-        "127.0.0.1",
+        WS_HOST,
         WS_PORT,
         max_size=2**20,
     ):
