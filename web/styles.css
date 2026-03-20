@@ -343,6 +343,33 @@ body {
   gap: 8px;
 }
 
+.call-panel {
+  border-top: 1px solid var(--line);
+  padding: 10px 16px 12px;
+  background: #24262b;
+}
+
+.call-status {
+  font-size: 0.84rem;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+.video-grid {
+  display: grid;
+  grid-template-columns: 1fr 180px;
+  gap: 8px;
+}
+
+.video-grid video {
+  width: 100%;
+  min-height: 120px;
+  background: #101114;
+  border: 1px solid #3f4147;
+  border-radius: 10px;
+  object-fit: cover;
+}
+
 .msg {
   background: #303339;
   border: 1px solid #40444b;
@@ -543,6 +570,10 @@ body {
 
   .members-pane {
     display: none;
+  }
+
+  .video-grid {
+    grid-template-columns: 1fr;
   }
 }
 

@@ -474,6 +474,31 @@ class ChatServer:
                             except Exception:
                                 pass
 
+                elif kind == "rtc_signal":
+                    if writer not in self.clients:
+                        continue
+                    sender = self.clients[writer]["username"]
+                    target = str(packet.get("to", "")).strip().lower()[:24]
+                    signal_type = str(packet.get("signalType", "")).strip().lower()
+                    if not target or signal_type not in {"offer", "answer", "ice", "hangup"}:
+                        continue
+                    target_writer = self.online_users.get(target)
+                    if not target_writer or target_writer not in self.clients:
+                        await self.send(writer, {"type": "action_error", "message": f"{target} is offline."})
+                        continue
+
+                    relay = {
+                        "type": "rtc_signal",
+                        "from": sender,
+                        "signalType": signal_type,
+                    }
+                    if "sdp" in packet:
+                        relay["sdp"] = packet["sdp"]
+                    if "candidate" in packet:
+                        relay["candidate"] = packet["candidate"]
+                    await self.send(target_writer, relay)
+                    self.store.log_event("rtc_signal", actor=sender, target=target, metadata={"signal_type": signal_type})
+
         except (ConnectionError, asyncio.IncompleteReadError):
             pass
         except Exception as exc:

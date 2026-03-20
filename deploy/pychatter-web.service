@@ -8,6 +8,12 @@ Requires=pychatter-server.service
 Type=simple
 User=pychatter
 WorkingDirectory=/opt/pychatter
+# Optional WebRTC relay settings for internet-wide calls:
+# Environment=PYCHATTER_TURN_URL=turn:your-domain.com:3478
+# Environment=PYCHATTER_TURN_USERNAME=pychatter
+# Environment=PYCHATTER_TURN_PASSWORD=change-me
+# Or provide full JSON list:
+# Environment=PYCHATTER_ICE_SERVERS=[{"urls":"stun:stun.l.google.com:19302"},{"urls":"turn:your-domain.com:3478","username":"pychatter","credential":"change-me"}]
 ExecStart=/usr/bin/bash /opt/pychatter/scripts/run_web.sh
 Restart=always
 RestartSec=2

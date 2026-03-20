@@ -30,6 +30,31 @@ DB_VIEW_TOKEN = os.environ.get("PYCHATTER_DB_VIEW_TOKEN", "")
 DB_VIEW_MAX_LIMIT = max(1, int(os.environ.get("PYCHATTER_DB_VIEW_MAX_LIMIT", "100")))
 
 
+def build_ice_servers() -> list[dict[str, Any]]:
+    env_json = os.environ.get("PYCHATTER_ICE_SERVERS", "").strip()
+    if env_json:
+        try:
+            parsed = json.loads(env_json)
+            if isinstance(parsed, list):
+                return [entry for entry in parsed if isinstance(entry, dict) and "urls" in entry]
+        except json.JSONDecodeError:
+            pass
+
+    servers: list[dict[str, Any]] = [{"urls": "stun:stun.l.google.com:19302"}]
+    turn_url = os.environ.get("PYCHATTER_TURN_URL", "").strip()
+    turn_user = os.environ.get("PYCHATTER_TURN_USERNAME", "").strip()
+    turn_pass = os.environ.get("PYCHATTER_TURN_PASSWORD", "").strip()
+    if turn_url and turn_user and turn_pass:
+        servers.append(
+            {
+                "urls": turn_url,
+                "username": turn_user,
+                "credential": turn_pass,
+            }
+        )
+    return servers
+
+
 def load_db_tables() -> list[str]:
     with sqlite3.connect(DB_PATH) as conn:
         rows = conn.execute(
@@ -152,6 +177,15 @@ class PyChatterHandler(http.server.SimpleHTTPRequestHandler):
 
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
+        if parsed.path == "/_rtc_config":
+            payload = json.dumps({"iceServers": build_ice_servers()}, separators=(",", ":")).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+            return
         if parsed.path == "/_db":
             # Public DB viewer removed for security hardening.
             self.send_error(404)

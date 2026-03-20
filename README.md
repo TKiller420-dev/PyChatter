@@ -242,3 +242,112 @@ Optional TLS (recommended):
 sudo dnf install -y certbot python3-certbot-nginx
 sudo certbot --nginx -d your-domain.com
 ```
+
+## Voice/Video Beyond Local Network
+
+For reliable public internet voice/video calls, STUN alone is not enough for many users. Configure TURN and HTTPS:
+
+1. Serve over HTTPS (required for browser camera/mic on non-localhost sites):
+
+   ```bash
+   sudo dnf install -y certbot python3-certbot-nginx
+   sudo certbot --nginx -d your-domain.com
+   ```
+
+2. Install and configure a TURN server (coturn), then set one of these env options for `pychatter-web`:
+
+   Simple env vars:
+
+   ```bash
+   PYCHATTER_TURN_URL=turn:your-domain.com:3478
+   PYCHATTER_TURN_USERNAME=pychatter
+   PYCHATTER_TURN_PASSWORD=strong-secret
+   ```
+
+   Or full ICE JSON:
+
+   ```bash
+   PYCHATTER_ICE_SERVERS='[{"urls":"stun:stun.l.google.com:19302"},{"urls":"turn:your-domain.com:3478","username":"pychatter","credential":"strong-secret"}]'
+   ```
+
+3. Restart web bridge service after setting env vars:
+
+   ```bash
+   sudo systemctl restart pychatter-web
+   ```
+
+The web client automatically fetches ICE settings from `/_rtc_config`.
+
+### Fedora coturn quick setup
+
+Use the included templates:
+
+- `deploy/turnserver.conf`
+- `deploy/pychatter-web-turn.env`
+
+1. Install coturn and create log directory:
+
+   ```bash
+   sudo dnf install -y coturn
+   sudo mkdir -p /var/log/turnserver
+   sudo chown turnserver:turnserver /var/log/turnserver
+   ```
+
+2. Install TURN config:
+
+   ```bash
+   sudo cp deploy/turnserver.conf /etc/turnserver.conf
+   sudo nano /etc/turnserver.conf
+   ```
+
+   Update at least:
+
+   - `static-auth-secret`
+   - `realm`
+   - `external-ip`
+
+3. Open firewall for TURN and relay ports:
+
+   ```bash
+   sudo firewall-cmd --permanent --add-port=3478/tcp
+   sudo firewall-cmd --permanent --add-port=3478/udp
+   sudo firewall-cmd --permanent --add-port=49160-49200/udp
+   sudo firewall-cmd --reload
+   ```
+
+4. Enable TURN service:
+
+   ```bash
+   sudo systemctl enable --now coturn
+   sudo systemctl restart coturn
+   sudo systemctl status coturn --no-pager
+   ```
+
+5. Configure PyChatter web service TURN env:
+
+   ```bash
+   sudo mkdir -p /etc/pychatter
+   sudo cp deploy/pychatter-web-turn.env /etc/pychatter/pychatter-web-turn.env
+   sudo nano /etc/pychatter/pychatter-web-turn.env
+   ```
+
+6. Add env file to `pychatter-web` systemd unit:
+
+   ```bash
+   sudo systemctl edit pychatter-web
+   ```
+
+   Paste:
+
+   ```ini
+   [Service]
+   EnvironmentFile=/etc/pychatter/pychatter-web-turn.env
+   ```
+
+7. Restart web service:
+
+   ```bash
+   sudo systemctl daemon-reload
+   sudo systemctl restart pychatter-web
+   sudo systemctl status pychatter-web --no-pager
+   ```

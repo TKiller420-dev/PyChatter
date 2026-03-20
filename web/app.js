@@ -10,6 +10,12 @@ const state = {
   selectedUser: "",
   authMode: "login",
   isAuthed: false,
+  rtc: {
+    pc: null,
+    localStream: null,
+    peer: "",
+    iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+  },
 };
 
 const $ = (id) => document.getElementById(id);
@@ -34,6 +40,10 @@ const showLoginBtn = $("showLoginBtn");
 const showRegisterBtn = $("showRegisterBtn");
 const selfUser = $("selfUser");
 const rememberMe = $("rememberMe");
+const callPanel = $("callPanel");
+const callStatus = $("callStatus");
+const localVideo = $("localVideo");
+const remoteVideo = $("remoteVideo");
 
 const REMEMBER_KEY = "pychatter.remember.v1";
 
@@ -131,6 +141,7 @@ function connectSocket() {
         return;
       }
       statusText.textContent = "Disconnected";
+      endCall(false);
       setAuthenticated(false);
     });
 
@@ -146,6 +157,191 @@ function connectSocket() {
 function send(packet) {
   if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
   state.ws.send(JSON.stringify(packet));
+}
+
+function setCallStatus(text) {
+  callStatus.textContent = text;
+}
+
+function getPeer() {
+  return state.rtc.peer;
+}
+
+function getConnection() {
+  return state.rtc.pc;
+}
+
+async function loadRtcConfig() {
+  try {
+    const res = await fetch("/_rtc_config", { cache: "no-store" });
+    if (!res.ok) return;
+    const payload = await res.json();
+    if (Array.isArray(payload.iceServers) && payload.iceServers.length) {
+      state.rtc.iceServers = payload.iceServers;
+    }
+  } catch {
+    // Keep default STUN-only fallback.
+  }
+}
+
+async function ensureLocalMedia() {
+  if (state.rtc.localStream) return state.rtc.localStream;
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+  state.rtc.localStream = stream;
+  localVideo.srcObject = stream;
+  return stream;
+}
+
+async function createPeerConnection(peerUser) {
+  const pc = new RTCPeerConnection({
+    iceServers: state.rtc.iceServers,
+  });
+  state.rtc.pc = pc;
+  state.rtc.peer = peerUser;
+
+  pc.onicecandidate = (event) => {
+    if (!event.candidate || !getPeer()) return;
+    send({
+      type: "rtc_signal",
+      to: getPeer(),
+      signalType: "ice",
+      candidate: event.candidate,
+    });
+  };
+
+  pc.ontrack = (event) => {
+    const [stream] = event.streams;
+    if (stream) {
+      remoteVideo.srcObject = stream;
+    }
+  };
+
+  pc.onconnectionstatechange = () => {
+    const st = pc.connectionState;
+    if (st === "connected") {
+      setCallStatus(`In call with ${getPeer()}`);
+    } else if (["failed", "closed", "disconnected"].includes(st)) {
+      endCall(false);
+      setCallStatus("Call ended");
+    }
+  };
+
+  const stream = await ensureLocalMedia();
+  stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+  callPanel.classList.remove("hidden");
+  return pc;
+}
+
+async function startCall() {
+  if (!state.selectedUser) {
+    alert("Select a user first");
+    return;
+  }
+  const target = state.selectedUser.toLowerCase();
+  if (target === state.username) {
+    alert("You cannot call yourself.");
+    return;
+  }
+  if (getConnection()) {
+    endCall(true);
+  }
+
+  try {
+    setCallStatus(`Calling ${target}...`);
+    const pc = await createPeerConnection(target);
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    send({
+      type: "rtc_signal",
+      to: target,
+      signalType: "offer",
+      sdp: pc.localDescription,
+    });
+  } catch (err) {
+    setCallStatus("Call failed to start");
+    endCall(false);
+    addMessage("System", `Could not start call: ${err}`, "system");
+  }
+}
+
+async function handleRtcSignal(packet) {
+  const from = (packet.from || "").toLowerCase();
+  const signalType = packet.signalType;
+  if (!from || !signalType) return;
+
+  try {
+    if (signalType === "offer") {
+      if (getConnection()) {
+        endCall(true);
+      }
+      setCallStatus(`Incoming call from ${from}...`);
+      const pc = await createPeerConnection(from);
+      await pc.setRemoteDescription(new RTCSessionDescription(packet.sdp));
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      send({
+        type: "rtc_signal",
+        to: from,
+        signalType: "answer",
+        sdp: pc.localDescription,
+      });
+      setCallStatus(`In call with ${from}`);
+      return;
+    }
+
+    if (!getConnection() || getPeer() !== from) {
+      return;
+    }
+
+    if (signalType === "answer" && packet.sdp) {
+      await getConnection().setRemoteDescription(new RTCSessionDescription(packet.sdp));
+      setCallStatus(`In call with ${from}`);
+    } else if (signalType === "ice" && packet.candidate) {
+      await getConnection().addIceCandidate(new RTCIceCandidate(packet.candidate));
+    } else if (signalType === "hangup") {
+      endCall(false);
+      setCallStatus(`${from} ended the call`);
+    }
+  } catch (err) {
+    addMessage("System", `Call signaling error: ${err}`, "system");
+  }
+}
+
+function endCall(sendHangup) {
+  const peer = getPeer();
+  if (sendHangup && peer) {
+    send({ type: "rtc_signal", to: peer, signalType: "hangup" });
+  }
+
+  if (state.rtc.pc) {
+    try {
+      state.rtc.pc.onicecandidate = null;
+      state.rtc.pc.ontrack = null;
+      state.rtc.pc.close();
+    } catch {
+      // ignore close errors
+    }
+  }
+  state.rtc.pc = null;
+  state.rtc.peer = "";
+
+  if (state.rtc.localStream) {
+    state.rtc.localStream.getTracks().forEach((t) => t.stop());
+    state.rtc.localStream = null;
+  }
+  localVideo.srcObject = null;
+  remoteVideo.srcObject = null;
+  callPanel.classList.add("hidden");
+}
+
+function toggleLocalTrack(kind) {
+  if (!state.rtc.localStream) return;
+  const tracks = kind === "audio" ? state.rtc.localStream.getAudioTracks() : state.rtc.localStream.getVideoTracks();
+  tracks.forEach((t) => {
+    t.enabled = !t.enabled;
+  });
+  const enabled = tracks.some((t) => t.enabled);
+  setCallStatus(`${kind === "audio" ? "Microphone" : "Camera"} ${enabled ? "on" : "off"}`);
 }
 
 function renderUsers() {
@@ -378,9 +574,13 @@ function handlePacket(packet) {
       authStatus.textContent = packet.message || "Authentication failed";
       break;
     case "logged_out":
+      endCall(false);
       setAuthenticated(false);
       setAuthMode("login");
       authStatus.textContent = "Signed out.";
+      break;
+    case "rtc_signal":
+      handleRtcSignal(packet);
       break;
     case "action_error":
       addMessage("System", packet.message || "Action failed", "system");
@@ -577,7 +777,33 @@ $("promoteBtn").addEventListener("click", () => {
   send({ type: "promote", username: state.selectedUser.toLowerCase(), role: normalized });
 });
 
+$("callBtn").addEventListener("click", async () => {
+  if (!state.isAuthed) return;
+  if (!navigator.mediaDevices || !window.RTCPeerConnection) {
+    alert("Your browser does not support WebRTC voice/video.");
+    return;
+  }
+  await startCall();
+});
+
+$("hangupBtn").addEventListener("click", () => {
+  if (!state.isAuthed) return;
+  endCall(true);
+  setCallStatus("Call ended");
+});
+
+$("toggleMicBtn").addEventListener("click", () => {
+  if (!state.isAuthed) return;
+  toggleLocalTrack("audio");
+});
+
+$("toggleCamBtn").addEventListener("click", () => {
+  if (!state.isAuthed) return;
+  toggleLocalTrack("video");
+});
+
 $("logoutBtn").addEventListener("click", () => {
+  endCall(false);
   if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
     clearRemember();
     setAuthenticated(false);
@@ -611,3 +837,4 @@ showRegisterBtn.addEventListener("click", () => setAuthMode("register"));
 }
 
 connectSocket();
+loadRtcConfig();

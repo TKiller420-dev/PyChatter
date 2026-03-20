@@ -73,6 +73,14 @@
 
       <section id="messages" class="messages"></section>
 
+      <section id="callPanel" class="call-panel hidden">
+        <div id="callStatus" class="call-status">No active call</div>
+        <div class="video-grid">
+          <video id="remoteVideo" autoplay playsinline></video>
+          <video id="localVideo" autoplay playsinline muted></video>
+        </div>
+      </section>
+
       <footer class="composer">
         <input id="messageInput" type="text" placeholder="Message #general">
         <button id="sendBtn" class="btn primary" type="button">Send</button>
@@ -92,6 +100,10 @@
       <section class="pane-block">
         <h2>Actions</h2>
         <div class="stack">
+          <button id="callBtn" class="btn ghost" type="button">Start Voice/Video</button>
+          <button id="hangupBtn" class="btn ghost" type="button">End Call</button>
+          <button id="toggleMicBtn" class="btn ghost" type="button">Toggle Mic</button>
+          <button id="toggleCamBtn" class="btn ghost" type="button">Toggle Camera</button>
           <button id="changeNameBtn" class="btn ghost" type="button">Change Username</button>
           <button id="dmBtn" class="btn ghost" type="button">Message User</button>
           <button id="dmHistoryBtn" class="btn ghost" type="button">View DM History</button>
