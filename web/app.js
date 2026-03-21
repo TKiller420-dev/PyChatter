@@ -16,6 +16,7 @@ const state = {
   selectedRequest: "",
   selectedVoiceRoom: "",
   selectedUser: "",
+  profiles: {},
   authMode: "login",
   isAuthed: false,
   rtc: {
@@ -47,6 +48,7 @@ const authSubmitBtn = $("authSubmitBtn");
 const showLoginBtn = $("showLoginBtn");
 const showRegisterBtn = $("showRegisterBtn");
 const selfUser = $("selfUser");
+const selfAvatarEl = $("selfAvatar");
 const rememberMe = $("rememberMe");
 const callPanel = $("callPanel");
 const callStatus = $("callStatus");
@@ -56,6 +58,9 @@ const friendsListEl = $("friendsList");
 const friendRequestsListEl = $("friendRequestsList");
 const voiceRoomsListEl = $("voiceRoomsList");
 const voiceRoomMetaEl = $("voiceRoomMeta");
+const usersMetaEl = $("usersMeta");
+const friendsMetaEl = $("friendsMeta");
+const requestsMetaEl = $("requestsMeta");
 
 const REMEMBER_KEY = "pychatter.remember.v1";
 
@@ -183,6 +188,36 @@ function selectedTarget() {
   return state.selectedFriend || state.selectedUser || "";
 }
 
+function mergeProfiles(profiles) {
+  if (!profiles || typeof profiles !== "object") return;
+  Object.entries(profiles).forEach(([username, profile]) => {
+    if (!username || !profile || typeof profile !== "object") return;
+    state.profiles[String(username).toLowerCase()] = {
+      avatar_url: String(profile.avatar_url || ""),
+      name_color: String(profile.name_color || ""),
+    };
+  });
+}
+
+function profileFor(username) {
+  return state.profiles[String(username || "").toLowerCase()] || { avatar_url: "", name_color: "" };
+}
+
+function applySelfAvatar() {
+  if (!selfAvatarEl) return;
+  const profile = profileFor(state.username);
+  const initial = (state.username || "?").slice(0, 1).toUpperCase();
+  if (profile.avatar_url) {
+    selfAvatarEl.style.backgroundImage = `url(${profile.avatar_url})`;
+    selfAvatarEl.style.backgroundSize = "cover";
+    selfAvatarEl.style.backgroundPosition = "center";
+    selfAvatarEl.textContent = "";
+  } else {
+    selfAvatarEl.style.backgroundImage = "";
+    selfAvatarEl.textContent = initial;
+  }
+}
+
 function ensureDefaultTarget() {
   if (selectedTarget()) return;
   const fromUsers = state.users.find((name) => name && name !== state.username);
@@ -297,9 +332,23 @@ async function startCall(mode = "video") {
       sdp: pc.localDescription,
     });
   } catch (err) {
+    let hint = String(err || "unknown error");
+    if (err && typeof err === "object" && "name" in err) {
+      const name = String(err.name || "");
+      if (name === "NotAllowedError") {
+        hint = "Mic/camera permission was denied. Allow browser permissions and try again.";
+      } else if (name === "NotFoundError") {
+        hint = "No microphone/camera device found.";
+      } else if (name === "NotReadableError") {
+        hint = "Mic/camera is busy in another app.";
+      }
+    }
+    if (!window.isSecureContext) {
+      hint = "Voice/video requires HTTPS (or localhost). Open the app over HTTPS and retry.";
+    }
     setCallStatus("Call failed to start");
     endCall(false);
-    addMessage("System", `Could not start call: ${err}`, "system");
+    addMessage("System", `Could not start call: ${hint}`, "system");
   }
 }
 
@@ -386,22 +435,18 @@ function toggleLocalTrack(kind) {
 }
 
 function renderUsers() {
-  usersEl.innerHTML = "";
-  state.users.forEach((name) => {
-    const li = document.createElement("li");
-    li.innerHTML = `<span class="online-dot"></span>${escapeHtml(name)}`;
-    if (name === state.selectedUser) li.classList.add("active");
-    li.addEventListener("click", () => {
-      state.selectedUser = name;
-      if (state.friends.includes(name)) {
-        state.selectedFriend = name;
-        renderFriends();
-      }
-      renderUsers();
-      syncActionButtons();
-    });
-    usersEl.appendChild(li);
-  });
+  if (usersMetaEl) {
+    usersMetaEl.textContent = `Online - ${state.users.length}`;
+  }
+  renderIdentityList(usersEl, state.users, state.selectedUser, (name) => {
+    state.selectedUser = name;
+    if (state.friends.includes(name)) {
+      state.selectedFriend = name;
+      renderFriends();
+    }
+    renderUsers();
+    syncActionButtons();
+  }, { presence: true });
 }
 
 function renderList(container, items, activeValue, onClick) {
@@ -416,19 +461,44 @@ function renderList(container, items, activeValue, onClick) {
 }
 
 function renderFriends() {
-  renderList(friendsListEl, state.friends, state.selectedFriend, (name) => {
+  if (friendsMetaEl) {
+    friendsMetaEl.textContent = `Friends - ${state.friends.length}`;
+  }
+  renderIdentityList(friendsListEl, state.friends, state.selectedFriend, (name) => {
     state.selectedFriend = name;
     state.selectedUser = name;
     renderFriends();
     renderUsers();
     syncActionButtons();
-  });
+  }, { presence: true });
 }
 
 function renderFriendRequests() {
-  renderList(friendRequestsListEl, state.incomingRequests, state.selectedRequest, (name) => {
+  if (requestsMetaEl) {
+    requestsMetaEl.textContent = `Incoming Requests - ${state.incomingRequests.length}`;
+  }
+  renderIdentityList(friendRequestsListEl, state.incomingRequests, state.selectedRequest, (name) => {
     state.selectedRequest = name;
     renderFriendRequests();
+  }, { presence: false });
+}
+
+function renderIdentityList(container, items, activeValue, onClick, opts = {}) {
+  container.innerHTML = "";
+  const showPresence = !!opts.presence;
+  items.forEach((item) => {
+    const profile = profileFor(item);
+    const initial = escapeHtml((item || "?").slice(0, 1).toUpperCase());
+    const avatarStyle = profile.avatar_url ? ` style="background-image:url('${escapeHtml(profile.avatar_url)}')"` : "";
+    const nameStyle = profile.name_color ? ` style="color:${escapeHtml(profile.name_color)}"` : "";
+    const li = document.createElement("li");
+    li.classList.add("identity-row");
+    li.innerHTML = `<span class="identity-avatar${profile.avatar_url ? " has-image" : ""}"${avatarStyle}>${profile.avatar_url ? "" : initial}</span>`
+      + `<span class="identity-name"${nameStyle}>${escapeHtml(item)}</span>`
+      + (showPresence ? `<span class="identity-presence online"></span>` : "");
+    if (item === activeValue) li.classList.add("active");
+    li.addEventListener("click", () => onClick(item));
+    container.appendChild(li);
   });
 }
 
@@ -584,7 +654,11 @@ function buildMessageEl(opts) {
   const ts = opts.created_at
     ? new Date(opts.created_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
     : "";
-  head.innerHTML = `${escapeHtml(opts.author || "")}${ts ? ` <span class="msg-ts">${ts}</span>` : ""}`;
+  const author = opts.author || "";
+  const profile = profileFor(author);
+  const authorColor = opts.author_name_color || profile.name_color || "";
+  const authorStyle = authorColor ? ` style="color:${escapeHtml(authorColor)}"` : "";
+  head.innerHTML = `<span class="msg-author"${authorStyle}>${escapeHtml(author)}</span>${ts ? ` <span class="msg-ts">${ts}</span>` : ""}`;
 
   const body = document.createElement("div");
   body.className = "msg-body";
@@ -623,6 +697,7 @@ function renderHistory(history) {
     messagesEl.appendChild(buildMessageEl({
       id: msg.id,
       author: msg.author || "?",
+      author_name_color: msg.author_name_color || "",
       content: msg.content || "",
       reactions: msg.reactions || {},
       edited_at: msg.edited_at,
@@ -660,6 +735,12 @@ function handlePacket(packet) {
     case "auth_ok":
       state.username = packet.username || state.username;
       state.role = packet.role || "member";
+      mergeProfiles({
+        [state.username]: {
+          avatar_url: packet.avatar_url || "",
+          name_color: packet.name_color || "",
+        },
+      });
       state.attemptedTokenAuth = false;
       if (packet.remember_token) {
         saveRemember(state.username, packet.remember_token);
@@ -668,6 +749,7 @@ function handlePacket(packet) {
       }
       roleBadge.textContent = state.role;
       selfUser.textContent = state.username;
+      applySelfAvatar();
       setAuthenticated(true);
       send({ type: "who" });
       send({ type: "social_sync" });
@@ -698,6 +780,7 @@ function handlePacket(packet) {
       state.voiceRooms = packet.voice_rooms || [];
       state.voiceState = packet.voice_state || {};
       state.currentVoiceRoom = packet.voice_room || "";
+      mergeProfiles(packet.profiles || {});
       if (state.selectedFriend && !state.friends.includes(state.selectedFriend)) state.selectedFriend = "";
       if (state.selectedRequest && !state.incomingRequests.includes(state.selectedRequest)) state.selectedRequest = "";
       if (state.selectedVoiceRoom && !state.voiceRooms.includes(state.selectedVoiceRoom)) state.selectedVoiceRoom = "";
@@ -709,6 +792,7 @@ function handlePacket(packet) {
       renderFriendRequests();
       renderVoiceRooms();
       renderUsers();
+      applySelfAvatar();
       syncActionButtons();
       break;
     case "action_error":
@@ -728,18 +812,29 @@ function handlePacket(packet) {
       break;
     case "user_list":
       state.users = packet.users || [];
+      mergeProfiles(packet.profiles || {});
       if (state.selectedUser && !state.users.includes(state.selectedUser) && !state.friends.includes(state.selectedUser)) {
         state.selectedUser = "";
       }
       ensureDefaultTarget();
       renderUsers();
       renderFriends();
+      applySelfAvatar();
       syncActionButtons();
       break;
     case "message": {
+      if (packet.author) {
+        mergeProfiles({
+          [packet.author]: {
+            avatar_url: packet.author_avatar_url || "",
+            name_color: packet.author_name_color || "",
+          },
+        });
+      }
       const box = buildMessageEl({
         id: packet.id,
         author: packet.author || "?",
+        author_name_color: packet.author_name_color || "",
         content: packet.content || "",
         created_at: packet.created_at,
         reactions: {},
@@ -816,7 +911,20 @@ function handlePacket(packet) {
     case "username_changed":
       state.username = packet.username || state.username;
       selfUser.textContent = state.username;
+      applySelfAvatar();
       addMessage("System", `Username changed to ${state.username}`, "system");
+      break;
+    case "profile_updated":
+      mergeProfiles({
+        [packet.username || state.username]: {
+          avatar_url: packet.avatar_url || "",
+          name_color: packet.name_color || "",
+        },
+      });
+      applySelfAvatar();
+      renderUsers();
+      renderFriends();
+      addMessage("System", "Profile updated.", "system");
       break;
     case "system":
       addMessage("System", packet.message || "", "system");
@@ -958,8 +1066,13 @@ $("promoteBtn").addEventListener("click", () => {
 
 $("voiceCallBtn").addEventListener("click", async () => {
   if (!state.isAuthed) return;
+  ensureDefaultTarget();
   if (!navigator.mediaDevices || !window.RTCPeerConnection) {
     alert("Your browser does not support WebRTC voice/video.");
+    return;
+  }
+  if (!window.isSecureContext) {
+    alert("Voice calls require HTTPS (or localhost). Open this site over HTTPS.");
     return;
   }
   await startCall("voice");
@@ -968,8 +1081,13 @@ $("voiceCallBtn").addEventListener("click", async () => {
 
 $("videoCallBtn").addEventListener("click", async () => {
   if (!state.isAuthed) return;
+  ensureDefaultTarget();
   if (!navigator.mediaDevices || !window.RTCPeerConnection) {
     alert("Your browser does not support WebRTC voice/video.");
+    return;
+  }
+  if (!window.isSecureContext) {
+    alert("Video calls require HTTPS (or localhost). Open this site over HTTPS.");
     return;
   }
   await startCall("video");

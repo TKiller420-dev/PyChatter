@@ -57,12 +57,14 @@ class ChatServer:
                 if w in self.clients
             ]
         )
+        profiles = self.store.get_user_profiles(users)
         await self.broadcast(
             channel,
             {
                 "type": "user_list",
                 "channel": channel,
                 "users": users,
+                "profiles": profiles,
             },
         )
 
@@ -76,6 +78,12 @@ class ChatServer:
             )
             for room, members in self.voice_rooms.items()
         }
+        profile_names = set([username])
+        profile_names.update(self.store.list_friends(username))
+        profile_names.update(self.store.list_incoming_friend_requests(username))
+        for members in voice_state.values():
+            profile_names.update(members)
+        profiles = self.store.get_user_profiles(sorted(profile_names))
         await self.send(
             writer,
             {
@@ -85,6 +93,7 @@ class ChatServer:
                 "voice_rooms": sorted(self.voice_rooms.keys()),
                 "voice_state": voice_state,
                 "voice_room": self.voice_by_writer.get(writer, ""),
+                "profiles": profiles,
             },
         )
 
@@ -197,7 +206,14 @@ class ChatServer:
         self.online_users[username] = writer
         self.store.log_event("user_authenticated", actor=username, channel=channel, metadata={"action": action})
 
-        auth_ok_packet = {"type": "auth_ok", "username": username, "role": role}
+        profile = self.store.get_user_profile(username)
+        auth_ok_packet = {
+            "type": "auth_ok",
+            "username": username,
+            "role": role,
+            "avatar_url": profile.get("avatar_url", ""),
+            "name_color": profile.get("name_color", ""),
+        }
         if action == "token" or remember:
             auth_ok_packet["remember_token"] = self.store.create_remember_token(username)
         await self.send(writer, auth_ok_packet)
@@ -284,11 +300,14 @@ class ChatServer:
                     msg_id = fast_hash(f"{username}:{time.time_ns()}:{content}")
                     created_at = int(time.time())
                     self.store.save_channel_message(msg_id, channel, username, content)
+                    profile = self.store.get_user_profile(username)
                     packet_out = {
                         "type": "message",
                         "id": msg_id,
                         "channel": channel,
                         "author": username,
+                        "author_avatar_url": profile.get("avatar_url", ""),
+                        "author_name_color": profile.get("name_color", ""),
                         "content": content,
                         "created_at": created_at,
                     }
@@ -384,7 +403,11 @@ class ChatServer:
                             if w in self.clients
                         ]
                     )
-                    await self.send(writer, {"type": "user_list", "channel": channel, "users": users})
+                    profiles = self.store.get_user_profiles(users)
+                    await self.send(
+                        writer,
+                        {"type": "user_list", "channel": channel, "users": users, "profiles": profiles},
+                    )
 
                 elif kind == "social_sync":
                     if writer not in self.clients:
@@ -513,6 +536,31 @@ class ChatServer:
                             "timestamp": int(time.time()),
                         },
                     )
+                    await self.send_roster(channel)
+                    await self.broadcast_social_state()
+
+                elif kind == "set_profile":
+                    if writer not in self.clients:
+                        continue
+                    username = self.clients[writer]["username"]
+                    avatar_url = str(packet.get("avatar_url", ""))
+                    name_color = str(packet.get("name_color", ""))
+                    ok, error_message = self.store.set_user_profile(username, avatar_url, name_color)
+                    if not ok:
+                        await self.send(writer, {"type": "action_error", "message": error_message})
+                        continue
+                    profile = self.store.get_user_profile(username)
+                    await self.send(
+                        writer,
+                        {
+                            "type": "profile_updated",
+                            "username": username,
+                            "avatar_url": profile.get("avatar_url", ""),
+                            "name_color": profile.get("name_color", ""),
+                        },
+                    )
+                    channel = self.client_channels.get(writer, "general")
+                    self.store.log_event("profile_updated", actor=username, channel=channel)
                     await self.send_roster(channel)
                     await self.broadcast_social_state()
 

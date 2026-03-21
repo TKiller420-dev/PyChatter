@@ -56,8 +56,19 @@
         </div>
         <ul id="channels" class="list channel-list"></ul>
       </section>
+      <section class="pane-block">
+        <div class="block-head">
+          <h2>Voice Channels</h2>
+        </div>
+        <ul id="voiceRoomsList" class="list voice-list"></ul>
+        <div id="voiceRoomMeta" class="submeta">Not in a room</div>
+        <div class="stack">
+          <button id="createVoiceRoomBtn" class="btn ghost" type="button">Create Voice Room</button>
+          <button id="leaveVoiceRoomBtn" class="btn ghost" type="button">Leave Voice Room</button>
+        </div>
+      </section>
       <footer class="self-card">
-        <div class="self-avatar"></div>
+        <div id="selfAvatar" class="self-avatar"></div>
         <div class="self-block">
           <div id="selfUser" class="self-user">guest</div>
           <div id="statusText" class="self-meta">Connecting...</div>
@@ -109,6 +120,7 @@
           <h2>Members</h2>
           <button id="refreshUsersBtn" class="icon-btn" title="Refresh" type="button">R</button>
         </div>
+        <div id="usersMeta" class="subhead">Online - 0</div>
         <ul id="users" class="list user-list"></ul>
       </section>
 
@@ -117,25 +129,14 @@
           <h2>Friends</h2>
           <button id="socialSyncBtn" class="icon-btn" title="Refresh Social" type="button">R</button>
         </div>
+        <div id="friendsMeta" class="subhead">Friends - 0</div>
         <ul id="friendsList" class="list"></ul>
-        <div class="subhead">Incoming Requests</div>
+        <div id="requestsMeta" class="subhead">Incoming Requests - 0</div>
         <ul id="friendRequestsList" class="list"></ul>
         <div class="stack">
           <button id="addFriendBtn" class="btn ghost" type="button">Add Friend</button>
           <button id="acceptFriendBtn" class="btn ghost" type="button">Accept Request</button>
           <button id="removeFriendBtn" class="btn ghost" type="button">Remove Friend</button>
-        </div>
-      </section>
-
-      <section class="pane-block">
-        <div class="block-head">
-          <h2>Voice Rooms</h2>
-        </div>
-        <ul id="voiceRoomsList" class="list"></ul>
-        <div id="voiceRoomMeta" class="submeta">Not in a room</div>
-        <div class="stack">
-          <button id="createVoiceRoomBtn" class="btn ghost" type="button">Create Voice Room</button>
-          <button id="leaveVoiceRoomBtn" class="btn ghost" type="button">Leave Voice Room</button>
         </div>
       </section>
 
@@ -151,6 +152,8 @@
       <section class="pane-block action-grid">
         <h2>Server Actions</h2>
         <button id="changeNameBtn" class="btn ghost" type="button">Change Username</button>
+        <button id="setProfilePicBtn" class="btn ghost" type="button">Set Profile Picture</button>
+        <button id="setNameColorBtn" class="btn ghost" type="button">Set Name Color</button>
         <button id="promoteBtn" class="btn ghost" type="button">Set Member Role</button>
         <button id="logoutBtn" class="btn ghost danger" type="button">Log Out</button>
       </section>

@@ -26,6 +26,8 @@ class ChatStore:
                     password_salt BLOB NOT NULL,
                     password_hash BLOB NOT NULL,
                     role TEXT NOT NULL,
+                    avatar_url TEXT,
+                    name_color TEXT,
                     created_at INTEGER NOT NULL,
                     last_login_at INTEGER,
                     last_seen_at INTEGER,
@@ -160,6 +162,10 @@ class ChatStore:
                 cur.execute("ALTER TABLE users ADD COLUMN last_seen_at INTEGER")
             if "is_online" not in user_cols:
                 cur.execute("ALTER TABLE users ADD COLUMN is_online INTEGER NOT NULL DEFAULT 0")
+            if "avatar_url" not in user_cols:
+                cur.execute("ALTER TABLE users ADD COLUMN avatar_url TEXT")
+            if "name_color" not in user_cols:
+                cur.execute("ALTER TABLE users ADD COLUMN name_color TEXT")
 
             # v2 migration: message editing, soft-delete, reactions.
             cur.execute("PRAGMA table_info(channel_messages)")
@@ -418,6 +424,77 @@ class ChatStore:
             row = cur.fetchone()
             return row["role"] if row else "member"
 
+    def get_user_profile(self, username: str) -> dict[str, str]:
+        username = username.strip().lower()
+        with self.lock:
+            cur = self.conn.cursor()
+            cur.execute(
+                "SELECT avatar_url, name_color FROM users WHERE username = ?",
+                (username,),
+            )
+            row = cur.fetchone()
+            if row is None:
+                return {"avatar_url": "", "name_color": ""}
+            return {
+                "avatar_url": str(row["avatar_url"] or ""),
+                "name_color": str(row["name_color"] or ""),
+            }
+
+    def get_user_profiles(self, usernames: list[str]) -> dict[str, dict[str, str]]:
+        cleaned = sorted({u.strip().lower() for u in usernames if u and u.strip()})
+        if not cleaned:
+            return {}
+        placeholders = ",".join("?" for _ in cleaned)
+        with self.lock:
+            cur = self.conn.cursor()
+            cur.execute(
+                f"SELECT username, avatar_url, name_color FROM users WHERE username IN ({placeholders})",
+                cleaned,
+            )
+            rows = cur.fetchall()
+        out: dict[str, dict[str, str]] = {}
+        for row in rows:
+            uname = str(row["username"])
+            out[uname] = {
+                "avatar_url": str(row["avatar_url"] or ""),
+                "name_color": str(row["name_color"] or ""),
+            }
+        return out
+
+    def set_user_profile(self, username: str, avatar_url: str, name_color: str) -> tuple[bool, str]:
+        username = username.strip().lower()
+        avatar_url = avatar_url.strip()
+        name_color = name_color.strip().lower()
+
+        if avatar_url and len(avatar_url) > 500:
+            return False, "Profile picture URL is too long."
+        if avatar_url and not (
+            avatar_url.startswith("https://")
+            or avatar_url.startswith("http://")
+            or avatar_url.startswith("data:image/")
+        ):
+            return False, "Profile picture must be a valid URL (http/https) or data image."
+
+        if name_color:
+            if not (len(name_color) == 7 and name_color.startswith("#")):
+                return False, "Name color must be a hex value like #5865f2."
+            try:
+                int(name_color[1:], 16)
+            except ValueError:
+                return False, "Name color must be a valid hex value like #5865f2."
+
+        with self.lock:
+            cur = self.conn.cursor()
+            cur.execute(
+                "UPDATE users SET avatar_url = ?, name_color = ? WHERE username = ?",
+                (avatar_url or None, name_color or None, username),
+            )
+            updated = cur.rowcount > 0
+            self.conn.commit()
+        if not updated:
+            return False, "User not found."
+        return True, ""
+
     def set_user_role(self, username: str, role: str) -> bool:
         if role not in {"member", "mod", "admin"}:
             return False
@@ -525,6 +602,13 @@ class ChatStore:
             )
             rows = [dict(row) for row in cur.fetchall()]
         rows.reverse()
+        if rows:
+            authors = [str(r.get("author", "")).strip().lower() for r in rows]
+            profiles = self.get_user_profiles(authors)
+            for row in rows:
+                profile = profiles.get(str(row.get("author", "")).strip().lower(), {})
+                row["author_avatar_url"] = profile.get("avatar_url", "")
+                row["author_name_color"] = profile.get("name_color", "")
         if rows:
             reactions = self.get_reactions_bulk([r["id"] for r in rows])
             for row in rows:
