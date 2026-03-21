@@ -7,6 +7,14 @@ const state = {
   channel: "general",
   channels: [],
   users: [],
+  friends: [],
+  incomingRequests: [],
+  voiceRooms: [],
+  voiceState: {},
+  currentVoiceRoom: "",
+  selectedFriend: "",
+  selectedRequest: "",
+  selectedVoiceRoom: "",
   selectedUser: "",
   authMode: "login",
   isAuthed: false,
@@ -44,6 +52,10 @@ const callPanel = $("callPanel");
 const callStatus = $("callStatus");
 const localVideo = $("localVideo");
 const remoteVideo = $("remoteVideo");
+const friendsListEl = $("friendsList");
+const friendRequestsListEl = $("friendRequestsList");
+const voiceRoomsListEl = $("voiceRoomsList");
+const voiceRoomMetaEl = $("voiceRoomMeta");
 
 const REMEMBER_KEY = "pychatter.remember.v1";
 
@@ -109,6 +121,12 @@ function setAuthenticated(isAuthed) {
   state.isAuthed = isAuthed;
   authView.classList.toggle("hidden", isAuthed);
   appView.classList.toggle("hidden", !isAuthed);
+  if (!isAuthed) {
+    state.selectedFriend = "";
+    state.selectedRequest = "";
+    state.selectedVoiceRoom = "";
+    state.currentVoiceRoom = "";
+  }
 }
 
 function connectSocket() {
@@ -366,6 +384,45 @@ function renderList(container, items, activeValue, onClick) {
   });
 }
 
+function renderFriends() {
+  renderList(friendsListEl, state.friends, state.selectedFriend, (name) => {
+    state.selectedFriend = name;
+    renderFriends();
+  });
+}
+
+function renderFriendRequests() {
+  renderList(friendRequestsListEl, state.incomingRequests, state.selectedRequest, (name) => {
+    state.selectedRequest = name;
+    renderFriendRequests();
+  });
+}
+
+function roomLabel(room) {
+  const users = state.voiceState[room] || [];
+  return `${room} (${users.length})`;
+}
+
+function renderVoiceRooms() {
+  voiceRoomsListEl.innerHTML = "";
+  state.voiceRooms.forEach((room) => {
+    const li = document.createElement("li");
+    li.textContent = roomLabel(room);
+    if (room === state.selectedVoiceRoom) li.classList.add("active");
+    li.addEventListener("click", () => {
+      state.selectedVoiceRoom = room;
+      renderVoiceRooms();
+    });
+    voiceRoomsListEl.appendChild(li);
+  });
+  if (state.currentVoiceRoom) {
+    const users = (state.voiceState[state.currentVoiceRoom] || []).join(", ");
+    voiceRoomMetaEl.textContent = `In #${state.currentVoiceRoom}${users ? ` with ${users}` : ""}`;
+  } else {
+    voiceRoomMetaEl.textContent = "Not in a room";
+  }
+}
+
 // ─── HTML helpers ─────────────────────────────────────────────────────────────
 function escapeHtml(str) {
   const d = document.createElement("div");
@@ -562,6 +619,7 @@ function handlePacket(packet) {
       selfUser.textContent = state.username;
       setAuthenticated(true);
       send({ type: "who" });
+      send({ type: "social_sync" });
       addMessage("System", `Logged in as ${state.username}`, "system");
       break;
     case "auth_error":
@@ -581,6 +639,19 @@ function handlePacket(packet) {
       break;
     case "rtc_signal":
       handleRtcSignal(packet);
+      break;
+    case "social_state":
+      state.friends = packet.friends || [];
+      state.incomingRequests = packet.incoming_requests || [];
+      state.voiceRooms = packet.voice_rooms || [];
+      state.voiceState = packet.voice_state || {};
+      state.currentVoiceRoom = packet.voice_room || "";
+      if (state.selectedFriend && !state.friends.includes(state.selectedFriend)) state.selectedFriend = "";
+      if (state.selectedRequest && !state.incomingRequests.includes(state.selectedRequest)) state.selectedRequest = "";
+      if (state.selectedVoiceRoom && !state.voiceRooms.includes(state.selectedVoiceRoom)) state.selectedVoiceRoom = "";
+      renderFriends();
+      renderFriendRequests();
+      renderVoiceRooms();
       break;
     case "action_error":
       addMessage("System", packet.message || "Action failed", "system");
@@ -723,6 +794,57 @@ $("newChannelBtn").addEventListener("click", () => {
 
 $("refreshUsersBtn").addEventListener("click", () => {
   send({ type: "who" });
+});
+
+$("socialSyncBtn").addEventListener("click", () => {
+  send({ type: "social_sync" });
+});
+
+$("addFriendBtn").addEventListener("click", () => {
+  if (!state.isAuthed) return;
+  const target = prompt("Send friend request to username");
+  if (!target) return;
+  send({ type: "friend_request", to: target.trim().toLowerCase() });
+});
+
+$("acceptFriendBtn").addEventListener("click", () => {
+  if (!state.isAuthed) return;
+  if (!state.selectedRequest) {
+    alert("Select a friend request first.");
+    return;
+  }
+  send({ type: "friend_accept", from: state.selectedRequest.toLowerCase() });
+});
+
+$("removeFriendBtn").addEventListener("click", () => {
+  if (!state.isAuthed) return;
+  if (!state.selectedFriend) {
+    alert("Select a friend first.");
+    return;
+  }
+  if (!confirm(`Remove ${state.selectedFriend} from friends?`)) return;
+  send({ type: "friend_remove", user: state.selectedFriend.toLowerCase() });
+});
+
+$("createVoiceRoomBtn").addEventListener("click", () => {
+  if (!state.isAuthed) return;
+  const room = prompt("Voice room name");
+  if (!room) return;
+  send({ type: "voice_room_create", room: room.trim().toLowerCase().replace(/\s+/g, "-") });
+});
+
+$("joinVoiceRoomBtn").addEventListener("click", () => {
+  if (!state.isAuthed) return;
+  if (!state.selectedVoiceRoom) {
+    alert("Select a voice room first.");
+    return;
+  }
+  send({ type: "voice_join", room: state.selectedVoiceRoom.toLowerCase() });
+});
+
+$("leaveVoiceRoomBtn").addEventListener("click", () => {
+  if (!state.isAuthed) return;
+  send({ type: "voice_leave" });
 });
 
 $("dmBtn").addEventListener("click", () => {

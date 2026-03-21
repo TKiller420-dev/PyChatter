@@ -22,6 +22,13 @@ class ChatServer:
         self.channels: Dict[str, Set[asyncio.StreamWriter]] = defaultdict(set)
         for ch in self.store.list_channels():
             self.channels[ch] = set()
+        self.voice_rooms: Dict[str, Set[asyncio.StreamWriter]] = defaultdict(set)
+        self.voice_by_writer: Dict[asyncio.StreamWriter, str] = {}
+        for room in self.store.list_voice_rooms():
+            self.voice_rooms[room] = set()
+        if "lobby" not in self.voice_rooms:
+            self.store.ensure_voice_room("lobby", "system")
+            self.voice_rooms["lobby"] = set()
 
     async def send(self, writer: asyncio.StreamWriter, packet: dict) -> None:
         writer.write(encode_packet(packet))
@@ -50,6 +57,35 @@ class ChatServer:
                 if w in self.clients
             ]
         )
+
+    async def send_social_state(self, writer: asyncio.StreamWriter) -> None:
+        if writer not in self.clients:
+            return
+        username = self.clients[writer]["username"]
+        voice_state = {
+            room: sorted(
+                [self.clients[w]["username"] for w in members if w in self.clients]
+            )
+            for room, members in self.voice_rooms.items()
+        }
+        await self.send(
+            writer,
+            {
+                "type": "social_state",
+                "friends": self.store.list_friends(username),
+                "incoming_requests": self.store.list_incoming_friend_requests(username),
+                "voice_rooms": sorted(self.voice_rooms.keys()),
+                "voice_state": voice_state,
+                "voice_room": self.voice_by_writer.get(writer, ""),
+            },
+        )
+
+    async def broadcast_social_state(self) -> None:
+        for writer in list(self.clients.keys()):
+            try:
+                await self.send_social_state(writer)
+            except Exception:
+                pass
         await self.broadcast(
             channel,
             {
@@ -68,6 +104,9 @@ class ChatServer:
             self.online_users.pop(username, None)
         if channel and writer in self.channels[channel]:
             self.channels[channel].remove(writer)
+        voice_room = self.voice_by_writer.pop(writer, None)
+        if voice_room and writer in self.voice_rooms.get(voice_room, set()):
+            self.voice_rooms[voice_room].discard(writer)
 
         if username:
             self.store.set_user_presence(username, is_online=False)
@@ -92,6 +131,7 @@ class ChatServer:
                 )
             )
             asyncio.create_task(self.send_roster(channel))
+            asyncio.create_task(self.broadcast_social_state())
             self.store.log_event("user_disconnected", actor=username, channel=channel)
 
     async def send_channel_context(self, writer: asyncio.StreamWriter, channel: str, switched: bool) -> None:
@@ -162,6 +202,7 @@ class ChatServer:
             auth_ok_packet["remember_token"] = self.store.create_remember_token(username)
         await self.send(writer, auth_ok_packet)
         await self.send_channel_context(writer, channel, switched=False)
+        await self.send_social_state(writer)
         await self.broadcast(
             channel,
             {
@@ -172,6 +213,7 @@ class ChatServer:
             },
         )
         await self.send_roster(channel)
+        await self.broadcast_social_state()
 
     async def handle_client(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
@@ -344,6 +386,89 @@ class ChatServer:
                     )
                     await self.send(writer, {"type": "user_list", "channel": channel, "users": users})
 
+                elif kind == "social_sync":
+                    if writer not in self.clients:
+                        continue
+                    await self.send_social_state(writer)
+
+                elif kind == "friend_request":
+                    if writer not in self.clients:
+                        continue
+                    sender = self.clients[writer]["username"]
+                    target = str(packet.get("to", "")).strip().lower()[:24]
+                    ok, msg = self.store.send_friend_request(sender, target)
+                    if not ok:
+                        await self.send(writer, {"type": "action_error", "message": msg})
+                        continue
+                    self.store.log_event("friend_request_sent", actor=sender, target=target)
+                    await self.broadcast_social_state()
+
+                elif kind == "friend_accept":
+                    if writer not in self.clients:
+                        continue
+                    accepter = self.clients[writer]["username"]
+                    from_user = str(packet.get("from", "")).strip().lower()[:24]
+                    ok, msg = self.store.accept_friend_request(accepter, from_user)
+                    if not ok:
+                        await self.send(writer, {"type": "action_error", "message": msg})
+                        continue
+                    self.store.log_event("friend_request_accepted", actor=accepter, target=from_user)
+                    await self.broadcast_social_state()
+
+                elif kind == "friend_remove":
+                    if writer not in self.clients:
+                        continue
+                    actor = self.clients[writer]["username"]
+                    target = str(packet.get("user", "")).strip().lower()[:24]
+                    if not target:
+                        continue
+                    if not self.store.remove_friend(actor, target):
+                        await self.send(writer, {"type": "action_error", "message": "You are not friends with that user."})
+                        continue
+                    self.store.log_event("friend_removed", actor=actor, target=target)
+                    await self.broadcast_social_state()
+
+                elif kind == "voice_room_create":
+                    if writer not in self.clients:
+                        continue
+                    actor = self.clients[writer]["username"]
+                    room = str(packet.get("room", "")).strip().lower()[:32]
+                    if not room:
+                        await self.send(writer, {"type": "action_error", "message": "Room name is required."})
+                        continue
+                    self.store.ensure_voice_room(room, actor)
+                    self.voice_rooms.setdefault(room, set())
+                    self.store.log_event("voice_room_created", actor=actor, metadata={"room": room})
+                    await self.broadcast_social_state()
+
+                elif kind == "voice_join":
+                    if writer not in self.clients:
+                        continue
+                    actor = self.clients[writer]["username"]
+                    room = str(packet.get("room", "")).strip().lower()[:32]
+                    if not room:
+                        await self.send(writer, {"type": "action_error", "message": "Room name is required."})
+                        continue
+                    self.store.ensure_voice_room(room, actor)
+                    self.voice_rooms.setdefault(room, set())
+                    prev = self.voice_by_writer.get(writer)
+                    if prev and writer in self.voice_rooms.get(prev, set()):
+                        self.voice_rooms[prev].discard(writer)
+                    self.voice_rooms[room].add(writer)
+                    self.voice_by_writer[writer] = room
+                    self.store.log_event("voice_join", actor=actor, metadata={"room": room, "from": prev or ""})
+                    await self.broadcast_social_state()
+
+                elif kind == "voice_leave":
+                    if writer not in self.clients:
+                        continue
+                    actor = self.clients[writer]["username"]
+                    prev = self.voice_by_writer.pop(writer, None)
+                    if prev and writer in self.voice_rooms.get(prev, set()):
+                        self.voice_rooms[prev].discard(writer)
+                        self.store.log_event("voice_leave", actor=actor, metadata={"room": prev})
+                        await self.broadcast_social_state()
+
                 elif kind == "change_username":
                     if writer not in self.clients:
                         continue
@@ -389,6 +514,7 @@ class ChatServer:
                         },
                     )
                     await self.send_roster(channel)
+                    await self.broadcast_social_state()
 
                 elif kind == "edit_message":
                     if writer not in self.clients:

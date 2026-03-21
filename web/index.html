@@ -98,6 +98,34 @@
       </section>
 
       <section class="pane-block">
+        <div class="block-head">
+          <h2>Friends</h2>
+          <button id="socialSyncBtn" class="icon-btn" title="Refresh Social" type="button">R</button>
+        </div>
+        <ul id="friendsList" class="list"></ul>
+        <div class="subhead">Incoming Requests</div>
+        <ul id="friendRequestsList" class="list"></ul>
+        <div class="stack">
+          <button id="addFriendBtn" class="btn ghost" type="button">Add Friend</button>
+          <button id="acceptFriendBtn" class="btn ghost" type="button">Accept Request</button>
+          <button id="removeFriendBtn" class="btn ghost" type="button">Remove Friend</button>
+        </div>
+      </section>
+
+      <section class="pane-block">
+        <div class="block-head">
+          <h2>Voice Rooms</h2>
+        </div>
+        <ul id="voiceRoomsList" class="list"></ul>
+        <div id="voiceRoomMeta" class="submeta">Not in a room</div>
+        <div class="stack">
+          <button id="createVoiceRoomBtn" class="btn ghost" type="button">Create Voice Room</button>
+          <button id="joinVoiceRoomBtn" class="btn ghost" type="button">Join Selected Room</button>
+          <button id="leaveVoiceRoomBtn" class="btn ghost" type="button">Leave Voice Room</button>
+        </div>
+      </section>
+
+      <section class="pane-block">
         <h2>Actions</h2>
         <div class="stack">
           <button id="callBtn" class="btn ghost" type="button">Start Voice/Video</button>

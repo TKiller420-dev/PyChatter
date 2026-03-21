@@ -430,6 +430,20 @@ body {
   gap: 8px;
 }
 
+.subhead {
+  margin: 10px 0 6px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.submeta {
+  color: var(--muted);
+  font-size: 0.8rem;
+  margin: 8px 0;
+}
+
 /* ── Message toolbar ──────────────────────────────────────────────────── */
 .msg { position: relative; }
 
