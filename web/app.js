@@ -183,6 +183,18 @@ function selectedTarget() {
   return state.selectedFriend || state.selectedUser || "";
 }
 
+function ensureDefaultTarget() {
+  if (selectedTarget()) return;
+  const fromUsers = state.users.find((name) => name && name !== state.username);
+  const fromFriends = state.friends.find((name) => name && name !== state.username);
+  const fallback = fromUsers || fromFriends || "";
+  if (!fallback) return;
+  state.selectedUser = fallback;
+  if (state.friends.includes(fallback)) {
+    state.selectedFriend = fallback;
+  }
+}
+
 function setCallStatus(text) {
   callStatus.textContent = text;
 }
@@ -440,6 +452,7 @@ function renderVoiceRooms() {
     });
     voiceRoomsListEl.appendChild(li);
   });
+  $("leaveVoiceRoomBtn").classList.toggle("hidden", !state.currentVoiceRoom);
   if (state.currentVoiceRoom) {
     const users = (state.voiceState[state.currentVoiceRoom] || []).join(", ");
     voiceRoomMetaEl.textContent = `In #${state.currentVoiceRoom}${users ? ` with ${users}` : ""}`;
@@ -688,9 +701,14 @@ function handlePacket(packet) {
       if (state.selectedFriend && !state.friends.includes(state.selectedFriend)) state.selectedFriend = "";
       if (state.selectedRequest && !state.incomingRequests.includes(state.selectedRequest)) state.selectedRequest = "";
       if (state.selectedVoiceRoom && !state.voiceRooms.includes(state.selectedVoiceRoom)) state.selectedVoiceRoom = "";
+      if (state.selectedUser && !state.users.includes(state.selectedUser) && !state.friends.includes(state.selectedUser)) {
+        state.selectedUser = "";
+      }
+      ensureDefaultTarget();
       renderFriends();
       renderFriendRequests();
       renderVoiceRooms();
+      renderUsers();
       syncActionButtons();
       break;
     case "action_error":
@@ -710,7 +728,13 @@ function handlePacket(packet) {
       break;
     case "user_list":
       state.users = packet.users || [];
+      if (state.selectedUser && !state.users.includes(state.selectedUser) && !state.friends.includes(state.selectedUser)) {
+        state.selectedUser = "";
+      }
+      ensureDefaultTarget();
       renderUsers();
+      renderFriends();
+      syncActionButtons();
       break;
     case "message": {
       const box = buildMessageEl({
@@ -871,15 +895,6 @@ $("createVoiceRoomBtn").addEventListener("click", () => {
   const room = prompt("Voice room name");
   if (!room) return;
   send({ type: "voice_room_create", room: room.trim().toLowerCase().replace(/\s+/g, "-") });
-});
-
-$("joinVoiceRoomBtn").addEventListener("click", () => {
-  if (!state.isAuthed) return;
-  if (!state.selectedVoiceRoom) {
-    alert("Select a voice room first.");
-    return;
-  }
-  send({ type: "voice_join", room: state.selectedVoiceRoom.toLowerCase() });
 });
 
 $("leaveVoiceRoomBtn").addEventListener("click", () => {

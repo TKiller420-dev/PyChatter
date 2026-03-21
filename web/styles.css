@@ -703,7 +703,7 @@ body {
   border: 0;
 }
 
-@media (max-width: 1220px) {
+@media (max-width: 980px) {
   .app {
     grid-template-columns: 72px 228px minmax(280px, 1fr);
   }
