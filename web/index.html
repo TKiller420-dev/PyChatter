@@ -4,14 +4,17 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>PyChatter Web</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
   <div id="authView" class="auth-view">
-    <div class="auth-bg-grid"></div>
+    <div class="auth-noise"></div>
     <section class="auth-card">
-      <div class="auth-brand">PyChatter</div>
-      <h1 id="authTitle">Welcome back</h1>
+      <div class="auth-brand">PyChatter Gateway</div>
+      <h1 id="authTitle">Welcome back, chatter</h1>
       <p id="authSubtitle">Log in to continue chatting with your server.</p>
 
       <div class="auth-switch">
@@ -55,20 +58,32 @@
       </section>
       <footer class="self-card">
         <div class="self-avatar"></div>
-        <div>
+        <div class="self-block">
           <div id="selfUser" class="self-user">guest</div>
           <div id="statusText" class="self-meta">Connecting...</div>
+        </div>
+        <div class="self-icons" aria-hidden="true">
+          <span>M</span>
+          <span>H</span>
+          <span>S</span>
         </div>
       </footer>
     </aside>
 
     <section class="chat-pane">
       <header class="chat-topbar">
-        <div>
-          <div id="channelTitle" class="chat-title">#general</div>
-          <div id="channelMeta" class="chat-meta">Community chat</div>
+        <div class="channel-headline">
+          <div class="hash">#</div>
+          <div>
+            <div id="channelTitle" class="chat-title">general</div>
+            <div id="channelMeta" class="chat-meta">Community chat</div>
+          </div>
         </div>
-        <div id="roleBadge" class="role-badge">member</div>
+        <div class="top-actions">
+          <button id="voiceCallBtn" class="icon-call" type="button" title="Start Voice Call">Voice</button>
+          <button id="videoCallBtn" class="icon-call" type="button" title="Start Video Call">Video</button>
+          <div id="roleBadge" class="role-badge">member</div>
+        </div>
       </header>
 
       <section id="messages" class="messages"></section>
@@ -125,26 +140,23 @@
         </div>
       </section>
 
-      <section class="pane-block">
-        <h2>Actions</h2>
-        <div class="submeta">Selected user actions</div>
-        <div class="stack">
-          <button id="dmBtn" class="btn ghost" type="button">Message</button>
-          <button id="voiceCallBtn" class="btn ghost" type="button">Voice Call</button>
-          <button id="videoCallBtn" class="btn ghost" type="button">Video Call</button>
-          <button id="hangupBtn" class="btn ghost" type="button">End Call</button>
-          <button id="toggleMicBtn" class="btn ghost" type="button">Mute / Unmute</button>
-          <button id="toggleCamBtn" class="btn ghost" type="button">Cam On / Off</button>
-        </div>
-        <div class="submeta">Account & moderation</div>
-        <div class="stack">
-          <button id="changeNameBtn" class="btn ghost" type="button">Change Username</button>
-          <button id="dmHistoryBtn" class="btn ghost" type="button">DM History</button>
-          <button id="promoteBtn" class="btn ghost" type="button">Set Member Role</button>
-          <button id="logoutBtn" class="btn ghost" type="button">Log Out</button>
-        </div>
+      <section class="pane-block action-grid">
+        <h2>Quick Actions</h2>
+        <button id="dmBtn" class="btn ghost" type="button">Message User</button>
+        <button id="dmHistoryBtn" class="btn ghost" type="button">DM History</button>
+        <button id="hangupBtn" class="btn ghost" type="button">End Call</button>
+        <button id="toggleMicBtn" class="btn ghost" type="button">Mute / Unmute</button>
+        <button id="toggleCamBtn" class="btn ghost" type="button">Cam On / Off</button>
+      </section>
+
+      <section class="pane-block action-grid">
+        <h2>Server Actions</h2>
+        <button id="changeNameBtn" class="btn ghost" type="button">Change Username</button>
+        <button id="promoteBtn" class="btn ghost" type="button">Set Member Role</button>
+        <button id="logoutBtn" class="btn ghost danger" type="button">Log Out</button>
       </section>
     </aside>
+
   </main>
 
   <script src="/app.js"></script>

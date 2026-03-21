@@ -433,6 +433,9 @@ function renderVoiceRooms() {
     if (room === state.selectedVoiceRoom) li.classList.add("active");
     li.addEventListener("click", () => {
       state.selectedVoiceRoom = room;
+      if (state.isAuthed && state.currentVoiceRoom !== room) {
+        send({ type: "voice_join", room: room.toLowerCase() });
+      }
       renderVoiceRooms();
     });
     voiceRoomsListEl.appendChild(li);
