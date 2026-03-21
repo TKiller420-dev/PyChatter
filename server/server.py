@@ -57,6 +57,14 @@ class ChatServer:
                 if w in self.clients
             ]
         )
+        await self.broadcast(
+            channel,
+            {
+                "type": "user_list",
+                "channel": channel,
+                "users": users,
+            },
+        )
 
     async def send_social_state(self, writer: asyncio.StreamWriter) -> None:
         if writer not in self.clients:
@@ -86,14 +94,6 @@ class ChatServer:
                 await self.send_social_state(writer)
             except Exception:
                 pass
-        await self.broadcast(
-            channel,
-            {
-                "type": "user_list",
-                "channel": channel,
-                "users": users,
-            },
-        )
 
     def disconnect(self, writer: asyncio.StreamWriter) -> None:
         client = self.clients.pop(writer, None)

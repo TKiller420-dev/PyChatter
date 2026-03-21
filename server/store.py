@@ -466,8 +466,7 @@ class ChatStore:
                     "UPDATE remember_tokens SET username = ? WHERE username = ?",
                     (new_username, old_username),
                 )
-                cur.execute("UPDATE friend_edges SET user_low = ? WHERE user_low = ?", (new_username, old_username))
-                cur.execute("UPDATE friend_edges SET user_high = ? WHERE user_high = ?", (new_username, old_username))
+                cur.execute("DELETE FROM friend_edges WHERE user_low = ? OR user_high = ?", (old_username, old_username))
                 cur.execute("UPDATE friend_requests SET from_user = ? WHERE from_user = ?", (new_username, old_username))
                 cur.execute("UPDATE friend_requests SET to_user = ? WHERE to_user = ?", (new_username, old_username))
                 cur.execute("UPDATE voice_rooms SET created_by = ? WHERE created_by = ?", (new_username, old_username))

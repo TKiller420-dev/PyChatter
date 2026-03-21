@@ -127,6 +127,7 @@ function setAuthenticated(isAuthed) {
     state.selectedVoiceRoom = "";
     state.currentVoiceRoom = "";
   }
+  syncActionButtons();
 }
 
 function connectSocket() {
@@ -161,6 +162,7 @@ function connectSocket() {
       statusText.textContent = "Disconnected";
       endCall(false);
       setAuthenticated(false);
+      syncActionButtons();
     });
 
     ws.addEventListener("message", (event) => {
@@ -175,6 +177,10 @@ function connectSocket() {
 function send(packet) {
   if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
   state.ws.send(JSON.stringify(packet));
+}
+
+function selectedTarget() {
+  return state.selectedFriend || state.selectedUser || "";
 }
 
 function setCallStatus(text) {
@@ -202,15 +208,16 @@ async function loadRtcConfig() {
   }
 }
 
-async function ensureLocalMedia() {
+async function ensureLocalMedia(mode = "video") {
   if (state.rtc.localStream) return state.rtc.localStream;
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+  const wantsVideo = mode !== "voice";
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: wantsVideo });
   state.rtc.localStream = stream;
   localVideo.srcObject = stream;
   return stream;
 }
 
-async function createPeerConnection(peerUser) {
+async function createPeerConnection(peerUser, mode = "video") {
   const pc = new RTCPeerConnection({
     iceServers: state.rtc.iceServers,
   });
@@ -244,18 +251,19 @@ async function createPeerConnection(peerUser) {
     }
   };
 
-  const stream = await ensureLocalMedia();
+  const stream = await ensureLocalMedia(mode);
   stream.getTracks().forEach((track) => pc.addTrack(track, stream));
   callPanel.classList.remove("hidden");
   return pc;
 }
 
-async function startCall() {
-  if (!state.selectedUser) {
-    alert("Select a user first");
+async function startCall(mode = "video") {
+  const targetName = selectedTarget();
+  if (!targetName) {
+    alert("Select a friend or user first");
     return;
   }
-  const target = state.selectedUser.toLowerCase();
+  const target = targetName.toLowerCase();
   if (target === state.username) {
     alert("You cannot call yourself.");
     return;
@@ -266,13 +274,14 @@ async function startCall() {
 
   try {
     setCallStatus(`Calling ${target}...`);
-    const pc = await createPeerConnection(target);
+    const pc = await createPeerConnection(target, mode);
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
     send({
       type: "rtc_signal",
       to: target,
       signalType: "offer",
+      mediaType: mode,
       sdp: pc.localDescription,
     });
   } catch (err) {
@@ -293,7 +302,8 @@ async function handleRtcSignal(packet) {
         endCall(true);
       }
       setCallStatus(`Incoming call from ${from}...`);
-      const pc = await createPeerConnection(from);
+      const mode = packet.mediaType === "voice" ? "voice" : "video";
+      const pc = await createPeerConnection(from, mode);
       await pc.setRemoteDescription(new RTCSessionDescription(packet.sdp));
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
@@ -350,6 +360,7 @@ function endCall(sendHangup) {
   localVideo.srcObject = null;
   remoteVideo.srcObject = null;
   callPanel.classList.add("hidden");
+  syncActionButtons();
 }
 
 function toggleLocalTrack(kind) {
@@ -368,7 +379,15 @@ function renderUsers() {
     const li = document.createElement("li");
     li.innerHTML = `<span class="online-dot"></span>${escapeHtml(name)}`;
     if (name === state.selectedUser) li.classList.add("active");
-    li.addEventListener("click", () => { state.selectedUser = name; renderUsers(); });
+    li.addEventListener("click", () => {
+      state.selectedUser = name;
+      if (state.friends.includes(name)) {
+        state.selectedFriend = name;
+        renderFriends();
+      }
+      renderUsers();
+      syncActionButtons();
+    });
     usersEl.appendChild(li);
   });
 }
@@ -387,7 +406,10 @@ function renderList(container, items, activeValue, onClick) {
 function renderFriends() {
   renderList(friendsListEl, state.friends, state.selectedFriend, (name) => {
     state.selectedFriend = name;
+    state.selectedUser = name;
     renderFriends();
+    renderUsers();
+    syncActionButtons();
   });
 }
 
@@ -421,6 +443,19 @@ function renderVoiceRooms() {
   } else {
     voiceRoomMetaEl.textContent = "Not in a room";
   }
+}
+
+function syncActionButtons() {
+  const hasTarget = !!selectedTarget();
+  const inCall = !!state.rtc.pc;
+  const micCamReady = !!state.rtc.localStream;
+  $("dmBtn").disabled = !state.isAuthed || !hasTarget;
+  $("voiceCallBtn").disabled = !state.isAuthed || !hasTarget;
+  $("videoCallBtn").disabled = !state.isAuthed || !hasTarget;
+  $("dmHistoryBtn").disabled = !state.isAuthed || !hasTarget;
+  $("hangupBtn").disabled = !state.isAuthed || !inCall;
+  $("toggleMicBtn").disabled = !state.isAuthed || !micCamReady;
+  $("toggleCamBtn").disabled = !state.isAuthed || !micCamReady;
 }
 
 // ─── HTML helpers ─────────────────────────────────────────────────────────────
@@ -636,6 +671,7 @@ function handlePacket(packet) {
       setAuthenticated(false);
       setAuthMode("login");
       authStatus.textContent = "Signed out.";
+      syncActionButtons();
       break;
     case "rtc_signal":
       handleRtcSignal(packet);
@@ -652,6 +688,7 @@ function handlePacket(packet) {
       renderFriends();
       renderFriendRequests();
       renderVoiceRooms();
+      syncActionButtons();
       break;
     case "action_error":
       addMessage("System", packet.message || "Action failed", "system");
@@ -848,13 +885,14 @@ $("leaveVoiceRoomBtn").addEventListener("click", () => {
 });
 
 $("dmBtn").addEventListener("click", () => {
-  if (!state.selectedUser) {
+  const targetName = selectedTarget();
+  if (!targetName) {
     alert("Select a user first");
     return;
   }
-  const text = prompt(`DM to ${state.selectedUser}`);
+  const text = prompt(`DM to ${targetName}`);
   if (!text) return;
-  send({ type: "dm", to: state.selectedUser.toLowerCase(), content: text.trim() });
+  send({ type: "dm", to: targetName.toLowerCase(), content: text.trim() });
 });
 
 $("changeNameBtn").addEventListener("click", () => {
@@ -873,11 +911,12 @@ $("changeNameBtn").addEventListener("click", () => {
 });
 
 $("dmHistoryBtn").addEventListener("click", () => {
-  if (!state.selectedUser) {
+  const targetName = selectedTarget();
+  if (!targetName) {
     alert("Select a user first");
     return;
   }
-  send({ type: "dm_history", with: state.selectedUser.toLowerCase() });
+  send({ type: "dm_history", with: targetName.toLowerCase() });
 });
 
 $("promoteBtn").addEventListener("click", () => {
@@ -899,29 +938,43 @@ $("promoteBtn").addEventListener("click", () => {
   send({ type: "promote", username: state.selectedUser.toLowerCase(), role: normalized });
 });
 
-$("callBtn").addEventListener("click", async () => {
+$("voiceCallBtn").addEventListener("click", async () => {
   if (!state.isAuthed) return;
   if (!navigator.mediaDevices || !window.RTCPeerConnection) {
     alert("Your browser does not support WebRTC voice/video.");
     return;
   }
-  await startCall();
+  await startCall("voice");
+  syncActionButtons();
+});
+
+$("videoCallBtn").addEventListener("click", async () => {
+  if (!state.isAuthed) return;
+  if (!navigator.mediaDevices || !window.RTCPeerConnection) {
+    alert("Your browser does not support WebRTC voice/video.");
+    return;
+  }
+  await startCall("video");
+  syncActionButtons();
 });
 
 $("hangupBtn").addEventListener("click", () => {
   if (!state.isAuthed) return;
   endCall(true);
   setCallStatus("Call ended");
+  syncActionButtons();
 });
 
 $("toggleMicBtn").addEventListener("click", () => {
   if (!state.isAuthed) return;
   toggleLocalTrack("audio");
+  syncActionButtons();
 });
 
 $("toggleCamBtn").addEventListener("click", () => {
   if (!state.isAuthed) return;
   toggleLocalTrack("video");
+  syncActionButtons();
 });
 
 $("logoutBtn").addEventListener("click", () => {
@@ -960,3 +1013,4 @@ showRegisterBtn.addEventListener("click", () => setAuthMode("register"));
 
 connectSocket();
 loadRtcConfig();
+syncActionButtons();
