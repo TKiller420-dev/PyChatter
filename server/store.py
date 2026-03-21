@@ -116,6 +116,37 @@ class ChatStore:
                 """
             )
             cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS friend_edges (
+                    user_low TEXT NOT NULL,
+                    user_high TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    PRIMARY KEY (user_low, user_high)
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS friend_requests (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    from_user TEXT NOT NULL,
+                    to_user TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    responded_at INTEGER
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS voice_rooms (
+                    name TEXT PRIMARY KEY,
+                    created_by TEXT NOT NULL,
+                    created_at INTEGER NOT NULL
+                )
+                """
+            )
+            cur.execute(
                 "INSERT OR IGNORE INTO channels (name, created_at) VALUES (?, ?)",
                 ("general", int(time.time())),
             )
@@ -160,6 +191,11 @@ class ChatStore:
 
     def _hash_token(self, token: str) -> str:
         return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+    def _friend_pair(self, user_a: str, user_b: str) -> tuple[str, str]:
+        a = user_a.strip().lower()
+        b = user_b.strip().lower()
+        return (a, b) if a < b else (b, a)
 
     def register_user(self, username: str, password: str) -> tuple[bool, str]:
         username = username.strip().lower()
@@ -430,6 +466,15 @@ class ChatStore:
                     "UPDATE remember_tokens SET username = ? WHERE username = ?",
                     (new_username, old_username),
                 )
+                cur.execute(
+                    "UPDATE friend_edges SET user_low = ?, user_high = ? WHERE user_low = ? AND user_high = ?",
+                    (*self._friend_pair(new_username, old_username), *self._friend_pair(old_username, old_username)),
+                )
+                cur.execute("UPDATE friend_edges SET user_low = ? WHERE user_low = ?", (new_username, old_username))
+                cur.execute("UPDATE friend_edges SET user_high = ? WHERE user_high = ?", (new_username, old_username))
+                cur.execute("UPDATE friend_requests SET from_user = ? WHERE from_user = ?", (new_username, old_username))
+                cur.execute("UPDATE friend_requests SET to_user = ? WHERE to_user = ?", (new_username, old_username))
+                cur.execute("UPDATE voice_rooms SET created_by = ? WHERE created_by = ?", (new_username, old_username))
                 cur.execute("COMMIT")
             except sqlite3.DatabaseError:
                 cur.execute("ROLLBACK")
@@ -615,3 +660,156 @@ class ChatStore:
             rows = [dict(row) for row in cur.fetchall()]
         rows.reverse()
         return rows
+
+    def user_exists(self, username: str) -> bool:
+        username = username.strip().lower()
+        with self.lock:
+            cur = self.conn.cursor()
+            cur.execute("SELECT 1 FROM users WHERE username = ?", (username,))
+            return cur.fetchone() is not None
+
+    def list_friends(self, username: str) -> list[str]:
+        username = username.strip().lower()
+        with self.lock:
+            cur = self.conn.cursor()
+            cur.execute(
+                """
+                SELECT CASE WHEN user_low = ? THEN user_high ELSE user_low END AS friend
+                FROM friend_edges
+                WHERE user_low = ? OR user_high = ?
+                ORDER BY friend ASC
+                """,
+                (username, username, username),
+            )
+            return [str(row["friend"]) for row in cur.fetchall()]
+
+    def list_incoming_friend_requests(self, username: str) -> list[str]:
+        username = username.strip().lower()
+        with self.lock:
+            cur = self.conn.cursor()
+            cur.execute(
+                """
+                SELECT from_user
+                FROM friend_requests
+                WHERE to_user = ? AND status = 'pending'
+                ORDER BY created_at ASC
+                """,
+                (username,),
+            )
+            return [str(row["from_user"]) for row in cur.fetchall()]
+
+    def send_friend_request(self, from_user: str, to_user: str) -> tuple[bool, str]:
+        from_user = from_user.strip().lower()
+        to_user = to_user.strip().lower()
+        if not to_user:
+            return False, "Target username is required."
+        if from_user == to_user:
+            return False, "You cannot add yourself."
+        if not self.user_exists(to_user):
+            return False, "User not found."
+
+        low, high = self._friend_pair(from_user, to_user)
+        now = int(time.time())
+        with self.lock:
+            cur = self.conn.cursor()
+            cur.execute(
+                "SELECT 1 FROM friend_edges WHERE user_low = ? AND user_high = ?",
+                (low, high),
+            )
+            if cur.fetchone() is not None:
+                return False, "You are already friends."
+
+            cur.execute(
+                """
+                SELECT id, from_user, to_user
+                FROM friend_requests
+                WHERE status = 'pending'
+                  AND ((from_user = ? AND to_user = ?) OR (from_user = ? AND to_user = ?))
+                ORDER BY id DESC LIMIT 1
+                """,
+                (from_user, to_user, to_user, from_user),
+            )
+            existing = cur.fetchone()
+            if existing is not None:
+                if str(existing["from_user"]) == to_user and str(existing["to_user"]) == from_user:
+                    return False, "That user already sent you a request."
+                return False, "Friend request already pending."
+
+            cur.execute(
+                "INSERT INTO friend_requests (from_user, to_user, status, created_at) VALUES (?, ?, 'pending', ?)",
+                (from_user, to_user, now),
+            )
+            self.conn.commit()
+        return True, "Friend request sent."
+
+    def accept_friend_request(self, to_user: str, from_user: str) -> tuple[bool, str]:
+        to_user = to_user.strip().lower()
+        from_user = from_user.strip().lower()
+        if to_user == from_user:
+            return False, "Invalid friend request."
+
+        low, high = self._friend_pair(to_user, from_user)
+        now = int(time.time())
+        with self.lock:
+            cur = self.conn.cursor()
+            cur.execute(
+                """
+                SELECT id FROM friend_requests
+                WHERE from_user = ? AND to_user = ? AND status = 'pending'
+                ORDER BY id DESC LIMIT 1
+                """,
+                (from_user, to_user),
+            )
+            row = cur.fetchone()
+            if row is None:
+                return False, "No pending request from that user."
+
+            cur.execute(
+                "UPDATE friend_requests SET status = 'accepted', responded_at = ? WHERE id = ?",
+                (now, int(row["id"])),
+            )
+            cur.execute(
+                "INSERT OR IGNORE INTO friend_edges (user_low, user_high, created_at) VALUES (?, ?, ?)",
+                (low, high, now),
+            )
+            self.conn.commit()
+        return True, "Friend request accepted."
+
+    def remove_friend(self, user_a: str, user_b: str) -> bool:
+        user_a = user_a.strip().lower()
+        user_b = user_b.strip().lower()
+        if user_a == user_b:
+            return False
+        low, high = self._friend_pair(user_a, user_b)
+        with self.lock:
+            cur = self.conn.cursor()
+            cur.execute("DELETE FROM friend_edges WHERE user_low = ? AND user_high = ?", (low, high))
+            deleted = cur.rowcount > 0
+            cur.execute(
+                """
+                UPDATE friend_requests SET status = 'declined', responded_at = ?
+                WHERE status = 'pending' AND ((from_user = ? AND to_user = ?) OR (from_user = ? AND to_user = ?))
+                """,
+                (int(time.time()), user_a, user_b, user_b, user_a),
+            )
+            self.conn.commit()
+            return deleted
+
+    def ensure_voice_room(self, name: str, created_by: str) -> None:
+        room = name.strip().lower()[:32]
+        if not room:
+            return
+        creator = created_by.strip().lower()
+        with self.lock:
+            cur = self.conn.cursor()
+            cur.execute(
+                "INSERT OR IGNORE INTO voice_rooms (name, created_by, created_at) VALUES (?, ?, ?)",
+                (room, creator or "system", int(time.time())),
+            )
+            self.conn.commit()
+
+    def list_voice_rooms(self) -> list[str]:
+        with self.lock:
+            cur = self.conn.cursor()
+            cur.execute("SELECT name FROM voice_rooms ORDER BY name ASC")
+            return [str(row["name"]) for row in cur.fetchall()]
