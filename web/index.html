@@ -97,6 +97,9 @@
         </div>
       </header>
 
+      <div class="message-toolbar" style="padding: 8px 12px; background: rgba(255,255,255,0.02); border-bottom: 1px solid var(--line);">
+        <input id="messageSearch" type="text" placeholder="Search messages..." style="width: 100%; padding: 6px 8px; border: 1px solid var(--line); background: rgba(255,255,255,0.05); color: var(--text); border-radius: 4px;">
+      </div>
       <section id="messages" class="messages"></section>
 
       <section id="callPanel" class="call-panel hidden">
@@ -150,11 +153,24 @@
       </section>
 
       <section class="pane-block action-grid">
-        <h2>Server Actions</h2>
+        <h2>User Actions</h2>
+        <button id="blockUserBtn" class="btn ghost" type="button">Block User</button>
+        <button id="unblockUserBtn" class="btn ghost" type="button">Unblock User</button>
+        <button id="bookmarkBtn" class="btn ghost" type="button">Bookmark Message</button>
+        <button id="viewBookmarksBtn" class="btn ghost" type="button">View Bookmarks</button>
+      </section>
+
+      <section class="pane-block action-grid">
+        <h2>Profile Settings</h2>
         <button id="changeNameBtn" class="btn ghost" type="button">Change Username</button>
-        <button id="setProfilePicBtn" class="btn ghost" type="button">Set Profile Picture</button>
+        <button id="setProfilePicBtn" class="btn ghost" type="button">Set Avatar</button>
         <button id="setNameColorBtn" class="btn ghost" type="button">Set Name Color</button>
         <button id="promoteBtn" class="btn ghost" type="button">Set Member Role</button>
+      </section>
+
+      <section class="pane-block action-grid">
+        <h2>Account</h2>
+        <button id="settingsBtn" class="btn ghost" type="button">Settings</button>
         <button id="logoutBtn" class="btn ghost danger" type="button">Log Out</button>
       </section>
     </aside>

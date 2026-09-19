@@ -19,6 +19,12 @@ const state = {
   profiles: {},
   authMode: "login",
   isAuthed: false,
+  notifications: [],
+  blockedUsers: [],
+  bookmarkedMessages: new Set(),
+  userSearch: "",
+  reconnectAttempts: 0,
+  maxReconnectAttempts: 10,
   rtc: {
     pc: null,
     localStream: null,
@@ -1113,6 +1119,63 @@ $("toggleCamBtn").addEventListener("click", () => {
   syncActionButtons();
 });
 
+$("blockUserBtn").addEventListener("click", () => {
+  if (!state.isAuthed) return;
+  const target = selectedTarget();
+  if (!target) {
+    alert("Select a user first");
+    return;
+  }
+  blockUser(target);
+  send({ type: "block_user", user: target.toLowerCase() });
+});
+
+$("unblockUserBtn").addEventListener("click", () => {
+  if (!state.isAuthed) return;
+  const username = prompt("Enter username to unblock");
+  if (!username) return;
+  unblockUser(username);
+});
+
+$("bookmarkBtn").addEventListener("click", () => {
+  const selected = messagesEl.querySelector(".msg");
+  if (!selected) {
+    alert("No messages to bookmark");
+    return;
+  }
+  const msgId = selected.dataset.msgId;
+  if (msgId && !state.bookmarkedMessages.has(msgId)) {
+    bookmarkMessage(msgId);
+    alert("Message bookmarked!");
+  }
+});
+
+$("viewBookmarksBtn").addEventListener("click", () => {
+  if (state.bookmarkedMessages.size === 0) {
+    alert("No bookmarked messages");
+    return;
+  }
+  addMessage("System", `── Bookmarked Messages (${state.bookmarkedMessages.size}) ──`, "system");
+});
+
+$("setNameColorBtn").addEventListener("click", () => {
+  if (!state.isAuthed) return;
+  const color = prompt("Enter color name or hex code (e.g., red, #FF5733)", "#7289da");
+  if (!color) return;
+  send({ type: "set_profile", name_color: color });
+});
+
+$("setProfilePicBtn").addEventListener("click", () => {
+  if (!state.isAuthed) return;
+  const url = prompt("Enter avatar image URL");
+  if (!url) return;
+  send({ type: "set_profile", avatar_url: url });
+});
+
+$("settingsBtn").addEventListener("click", () => {
+  alert(`⚙️ Settings\n\n- Username: ${state.username}\n- Role: ${state.role}\n- Blocked Users: ${state.blockedUsers.length}\n- Bookmarks: ${state.bookmarkedMessages.size}`);
+});
+
 $("logoutBtn").addEventListener("click", () => {
   endCall(false);
   if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
@@ -1146,6 +1209,195 @@ showRegisterBtn.addEventListener("click", () => setAuthMode("register"));
     rememberMe.checked = true;
   }
 }
+
+// ─── Notification System ─────────────────────────────────────────────────────
+function showNotification(title, options = {}) {
+  if ("Notification" in window && Notification.permission === "granted") {
+    new Notification(title, options);
+  }
+}
+
+function requestNotificationPermission() {
+  if ("Notification" in window && Notification.permission === "default") {
+    Notification.requestPermission();
+  }
+}
+
+// ─── Enhanced Error Handling ─────────────────────────────────────────────────
+function handleConnectionError(error) {
+  console.error("Connection error:", error);
+  if (state.reconnectAttempts < state.maxReconnectAttempts) {
+    const delay = Math.min(1000 * Math.pow(1.5, state.reconnectAttempts), 30000);
+    state.reconnectAttempts++;
+    setTimeout(() => connectSocket(), delay);
+  } else {
+    statusText.textContent = "Connection failed - please refresh";
+  }
+}
+
+// ─── Bookmark Management ─────────────────────────────────────────────────────
+function bookmarkMessage(msgId) {
+  state.bookmarkedMessages.add(msgId);
+  const el = document.getElementById(`msg-${msgId}`);
+  if (el) {
+    el.classList.add("bookmarked");
+    const mark = document.createElement("span");
+    mark.className = "bookmark-mark";
+    mark.textContent = "🔖";
+    el.insertBefore(mark, el.firstChild);
+  }
+  saveBookmarks();
+}
+
+function unbookmarkMessage(msgId) {
+  state.bookmarkedMessages.delete(msgId);
+  const el = document.getElementById(`msg-${msgId}`);
+  if (el) {
+    el.classList.remove("bookmarked");
+    el.querySelector(".bookmark-mark")?.remove();
+  }
+  saveBookmarks();
+}
+
+function saveBookmarks() {
+  localStorage.setItem("pychatter.bookmarks", JSON.stringify(Array.from(state.bookmarkedMessages)));
+}
+
+function loadBookmarks() {
+  try {
+    const saved = localStorage.getItem("pychatter.bookmarks");
+    if (saved) state.bookmarkedMessages = new Set(JSON.parse(saved));
+  } catch {
+    state.bookmarkedMessages = new Set();
+  }
+}
+
+// ─── Block System ───────────────────────────────────────────────────────────
+function blockUser(username) {
+  const normalized = username.toLowerCase();
+  if (!state.blockedUsers.includes(normalized)) {
+    state.blockedUsers.push(normalized);
+  }
+  saveBlockedUsers();
+  addMessage("System", `${username} has been blocked`, "system");
+}
+
+function unblockUser(username) {
+  const normalized = username.toLowerCase();
+  state.blockedUsers = state.blockedUsers.filter(u => u !== normalized);
+  saveBlockedUsers();
+  addMessage("System", `${username} has been unblocked`, "system");
+}
+
+function saveBlockedUsers() {
+  localStorage.setItem("pychatter.blocked", JSON.stringify(state.blockedUsers));
+}
+
+function loadBlockedUsers() {
+  try {
+    const saved = localStorage.getItem("pychatter.blocked");
+    if (saved) state.blockedUsers = JSON.parse(saved);
+  } catch {
+    state.blockedUsers = [];
+  }
+}
+
+function isUserBlocked(username) {
+  return state.blockedUsers.includes(username.toLowerCase());
+}
+
+// ─── User Search ────────────────────────────────────────────────────────────
+function filterUsers(searchTerm) {
+  if (!searchTerm) return state.users;
+  return state.users.filter(u => u.toLowerCase().includes(searchTerm.toLowerCase()));
+}
+
+function filterFriends(searchTerm) {
+  if (!searchTerm) return state.friends;
+  return state.friends.filter(u => u.toLowerCase().includes(searchTerm.toLowerCase()));
+}
+
+// ─── Enhanced Settings ───────────────────────────────────────────────────────
+function loadSettings() {
+  try {
+    const saved = localStorage.getItem("pychatter.settings");
+    return saved ? JSON.parse(saved) : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveSettings(settings) {
+  localStorage.setItem("pychatter.settings", JSON.stringify(settings));
+}
+
+// ─── Auto-reconnection ───────────────────────────────────────────────────────
+const originalConnectSocket = connectSocket;
+connectSocket = function() {
+  const wsProtocol = location.protocol === "https:" ? "wss" : "ws";
+  const candidates = [`${wsProtocol}://${location.host}/ws`, `${wsProtocol}://${location.hostname}:9011/ws`];
+
+  const connectAt = (index) => {
+    if (index >= candidates.length) {
+      statusText.textContent = "WebSocket unavailable";
+      setAuthenticated(false);
+      handleConnectionError(new Error("No WebSocket candidates available"));
+      return;
+    }
+
+    const ws = new WebSocket(candidates[index]);
+    let opened = false;
+    let timeout;
+
+    timeout = setTimeout(() => {
+      if (!opened) ws.close();
+    }, 5000);
+
+    ws.addEventListener("open", () => {
+      opened = true;
+      clearTimeout(timeout);
+      state.ws = ws;
+      state.reconnectAttempts = 0;
+      statusText.textContent = "Connected";
+      if (!attemptTokenLogin()) {
+        setAuthenticated(false);
+        setAuthMode("login");
+      }
+    });
+
+    ws.addEventListener("close", () => {
+      if (!opened) {
+        connectAt(index + 1);
+        return;
+      }
+      statusText.textContent = "Disconnected";
+      endCall(false);
+      setAuthenticated(false);
+      syncActionButtons();
+      handleConnectionError(new Error("WebSocket closed"));
+    });
+
+    ws.addEventListener("error", (event) => {
+      handleConnectionError(event);
+    });
+
+    ws.addEventListener("message", (event) => {
+      try {
+        const packet = JSON.parse(event.data);
+        handlePacket(packet);
+      } catch (err) {
+        console.error("Failed to parse packet:", err);
+      }
+    });
+  };
+
+  connectAt(0);
+};
+
+// ─── Initialize ──────────────────────────────────────────────────────────────
+loadBookmarks();
+loadBlockedUsers();
+requestNotificationPermission();
 
 connectSocket();
 loadRtcConfig();
