@@ -1039,12 +1039,31 @@
 			}
 		}
 
-		function stopServer() {
-			alert('Server stop requires manual intervention');
+		async function stopServer() {
+			if (!confirm('Stop the chat server? All connected users will be disconnected and no one will be able to reconnect until it is started again.')) return;
+			try {
+				const res = await fetch(`${API_BASE}/api/server/stop`, { method: 'POST' });
+				const data = await res.json();
+				alert(data.message || 'Server stopped');
+				setTimeout(checkServerStatus, 1000);
+			} catch (err) {
+				alert('Error stopping server: ' + err.message);
+			}
 		}
 
-		function startServer() {
-			alert('Server start requires manual intervention');
+		async function startServer() {
+			try {
+				const res = await fetch(`${API_BASE}/api/server/start`, { method: 'POST' });
+				const data = await res.json();
+				if (data.error) {
+					alert(data.error);
+				} else {
+					alert(data.message || 'Server started');
+				}
+				setTimeout(checkServerStatus, 1000);
+			} catch (err) {
+				alert('Error starting server: ' + err.message);
+			}
 		}
 
 		function clearLogs() {

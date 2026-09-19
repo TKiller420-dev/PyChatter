@@ -23,6 +23,10 @@ ADMIN_PORT = int(os.environ.get("PYCHATTER_ADMIN_PORT", "9020"))
 DASHBOARD_ROOT = pathlib.Path(__file__).resolve().parent.parent / "admin"
 SERVER_HOST = "127.0.0.1"
 SERVER_PORT = 8765
+SERVER_DIR = pathlib.Path(__file__).resolve().parent
+SERVER_SCRIPT = SERVER_DIR / "server.py"
+VENV_PYTHON = pathlib.Path(__file__).resolve().parent.parent / ".venv" / "bin" / "python3"
+SERVER_PYTHON = str(VENV_PYTHON) if VENV_PYTHON.exists() else sys.executable
 
 console_logs = []
 console_lock = threading.Lock()
@@ -210,14 +214,119 @@ class AdminHandler(http.server.SimpleHTTPRequestHandler):
         with console_lock:
             self._send_json({"logs": console_logs[-100:]})
 
+    def _find_server_pid(self):
+        """Find the running server.py PID via /proc — no external deps needed."""
+        target = str(SERVER_SCRIPT)
+        for entry in pathlib.Path("/proc").iterdir():
+            if not entry.name.isdigit():
+                continue
+            try:
+                cmdline = (entry / "cmdline").read_bytes().split(b"\x00")
+                cmdline = [p.decode("utf-8", "replace") for p in cmdline if p]
+            except (FileNotFoundError, PermissionError):
+                continue
+            if any(target in part for part in cmdline):
+                return int(entry.name)
+        return None
+
     def _restart_server(self) -> None:
         try:
-            add_log("Server restart initiated by admin", "warning")
-            subprocess.Popen(["systemctl", "restart", "pychatter"],
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            self._send_json({"success": True, "message": "Server restart initiated"})
+            pid = self._find_server_pid()
+            if pid is None:
+                add_log("Restart requested but server.py was not found running", "warning")
+            else:
+                add_log(f"Stopping server.py (pid {pid})...", "warning")
+                os.kill(pid, 15)  # SIGTERM
+                for _ in range(30):
+                    time.sleep(0.2)
+                    try:
+                        os.kill(pid, 0)
+                    except ProcessLookupError:
+                        break
+                else:
+                    add_log(f"pid {pid} did not exit, sending SIGKILL", "warning")
+                    try:
+                        os.kill(pid, 9)
+                    except ProcessLookupError:
+                        pass
+
+            add_log("Starting server.py...", "info")
+            subprocess.Popen(
+                [SERVER_PYTHON, str(SERVER_SCRIPT)],
+                cwd=str(SERVER_DIR),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+
+            for _ in range(25):
+                time.sleep(0.2)
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(0.3)
+                if sock.connect_ex((SERVER_HOST, SERVER_PORT)) == 0:
+                    sock.close()
+                    add_log("Server restarted and is accepting connections", "success")
+                    self._send_json({"success": True, "message": "Server restarted"})
+                    return
+                sock.close()
+
+            add_log("Server process started but is not yet accepting connections", "warning")
+            self._send_json({"success": True, "message": "Restart issued, server is still starting"})
         except Exception as e:
             add_log(f"Restart failed: {str(e)}", "error")
+            self._send_json({"error": str(e)}, 500)
+
+    def _stop_server(self) -> None:
+        try:
+            pid = self._find_server_pid()
+            if pid is None:
+                add_log("Stop requested but server.py was not running", "warning")
+                self._send_json({"success": True, "message": "Server was not running"})
+                return
+            add_log(f"Stopping server.py (pid {pid})...", "warning")
+            os.kill(pid, 15)
+            for _ in range(30):
+                time.sleep(0.2)
+                try:
+                    os.kill(pid, 0)
+                except ProcessLookupError:
+                    add_log("Server stopped", "success")
+                    self._send_json({"success": True, "message": "Server stopped"})
+                    return
+            os.kill(pid, 9)
+            add_log("Server force-killed after not responding to SIGTERM", "warning")
+            self._send_json({"success": True, "message": "Server force-stopped"})
+        except Exception as e:
+            add_log(f"Stop failed: {str(e)}", "error")
+            self._send_json({"error": str(e)}, 500)
+
+    def _start_server(self) -> None:
+        try:
+            if self._find_server_pid() is not None:
+                self._send_json({"error": "Server is already running"}, 400)
+                return
+            add_log("Starting server.py...", "info")
+            subprocess.Popen(
+                [SERVER_PYTHON, str(SERVER_SCRIPT)],
+                cwd=str(SERVER_DIR),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            for _ in range(25):
+                time.sleep(0.2)
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(0.3)
+                if sock.connect_ex((SERVER_HOST, SERVER_PORT)) == 0:
+                    sock.close()
+                    add_log("Server started", "success")
+                    self._send_json({"success": True, "message": "Server started"})
+                    return
+                sock.close()
+            add_log("Server process started but is not yet accepting connections", "warning")
+            self._send_json({"success": True, "message": "Server starting"})
+        except Exception as e:
+            add_log(f"Start failed: {str(e)}", "error")
             self._send_json({"error": str(e)}, 500)
 
     def _ban_user(self) -> None:
@@ -307,6 +416,14 @@ class AdminHandler(http.server.SimpleHTTPRequestHandler):
 
         if parsed.path == "/api/server/restart":
             self._restart_server()
+            return
+
+        if parsed.path == "/api/server/stop":
+            self._stop_server()
+            return
+
+        if parsed.path == "/api/server/start":
+            self._start_server()
             return
 
         self._send_json({"error": "Not found"}, 404)
