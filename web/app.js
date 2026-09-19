@@ -2240,7 +2240,6 @@ loadBookmarks();
 loadBlockedUsers();
 loadFavorites();
 loadMentionHistory();
-loadPinnedMessages();
 loadMessageThreads();
 requestNotificationPermission();
 
