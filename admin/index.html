@@ -1018,7 +1018,7 @@
 				const data = await res.json();
 				const statusEl = document.getElementById('server-status-text');
 				if (data.running) {
-					statusEl.textContent = '✅ Online & Running';
+					statusEl.textContent = data.uptime ? `✅ Online & Running — up ${data.uptime}` : '✅ Online & Running';
 				} else {
 					statusEl.textContent = '❌ Offline';
 				}

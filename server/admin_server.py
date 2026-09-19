@@ -10,6 +10,7 @@ import subprocess
 import sys
 import threading
 import time
+from datetime import datetime
 from typing import Any
 from urllib.parse import urlparse
 
@@ -23,10 +24,6 @@ ADMIN_PORT = int(os.environ.get("PYCHATTER_ADMIN_PORT", "9020"))
 DASHBOARD_ROOT = pathlib.Path(__file__).resolve().parent.parent / "admin"
 SERVER_HOST = "127.0.0.1"
 SERVER_PORT = 8765
-SERVER_DIR = pathlib.Path(__file__).resolve().parent
-SERVER_SCRIPT = SERVER_DIR / "server.py"
-VENV_PYTHON = pathlib.Path(__file__).resolve().parent.parent / ".venv" / "bin" / "python3"
-SERVER_PYTHON = str(VENV_PYTHON) if VENV_PYTHON.exists() else sys.executable
 
 console_logs = []
 console_lock = threading.Lock()
@@ -203,131 +200,101 @@ class AdminHandler(http.server.SimpleHTTPRequestHandler):
         except Exception:
             is_running = False
 
+        uptime = ""
+        try:
+            out = subprocess.run(
+                ["systemctl", "show", "pychatter-server.service", "--property=ActiveEnterTimestamp"],
+                capture_output=True, text=True, timeout=5,
+            ).stdout.strip()
+            ts = out.split("=", 1)[1].strip() if "=" in out else ""
+            if ts:
+                started = datetime.strptime(ts, "%a %Y-%m-%d %H:%M:%S %Z")
+                delta = datetime.now() - started
+                hours, remainder = divmod(int(delta.total_seconds()), 3600)
+                minutes = remainder // 60
+                uptime = f"{hours}h {minutes}m"
+        except Exception:
+            uptime = ""
+
         self._send_json({
             "running": is_running,
             "host": SERVER_HOST,
             "port": SERVER_PORT,
-            "uptime": "24h 30m"
+            "uptime": uptime,
         })
 
     def _get_console_logs(self) -> None:
         with console_lock:
             self._send_json({"logs": console_logs[-100:]})
 
-    def _find_server_pid(self):
-        """Find the running server.py PID via /proc — no external deps needed."""
-        target = str(SERVER_SCRIPT)
-        for entry in pathlib.Path("/proc").iterdir():
-            if not entry.name.isdigit():
-                continue
-            try:
-                cmdline = (entry / "cmdline").read_bytes().split(b"\x00")
-                cmdline = [p.decode("utf-8", "replace") for p in cmdline if p]
-            except (FileNotFoundError, PermissionError):
-                continue
-            if any(target in part for part in cmdline):
-                return int(entry.name)
-        return None
+    # server.py and web_bridge.py both run as real systemd units
+    # (pychatter-server.service / pychatter-web.service, User=pychatter,
+    # Restart=always). admin_server.py runs as that same pychatter user, and
+    # a scoped sudoers rule (/etc/sudoers.d/pychatter-service-control) grants
+    # it NOPASSWD access to exactly `systemctl {restart,stop,start,is-active}
+    # pychatter-server.service` — nothing else. We manage the unit through
+    # systemctl rather than killing/respawning the PID directly, because
+    # systemd's own Restart=always would otherwise race a manual respawn and
+    # produce two processes fighting over the same port.
+    def _systemctl(self, action: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["sudo", "-n", "systemctl", action, "pychatter-server.service"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+
+    def _wait_for_port(self, tries: int = 25, delay: float = 0.2) -> bool:
+        for _ in range(tries):
+            time.sleep(delay)
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(0.3)
+            if sock.connect_ex((SERVER_HOST, SERVER_PORT)) == 0:
+                sock.close()
+                return True
+            sock.close()
+        return False
 
     def _restart_server(self) -> None:
-        try:
-            pid = self._find_server_pid()
-            if pid is None:
-                add_log("Restart requested but server.py was not found running", "warning")
-            else:
-                add_log(f"Stopping server.py (pid {pid})...", "warning")
-                os.kill(pid, 15)  # SIGTERM
-                for _ in range(30):
-                    time.sleep(0.2)
-                    try:
-                        os.kill(pid, 0)
-                    except ProcessLookupError:
-                        break
-                else:
-                    add_log(f"pid {pid} did not exit, sending SIGKILL", "warning")
-                    try:
-                        os.kill(pid, 9)
-                    except ProcessLookupError:
-                        pass
-
-            add_log("Starting server.py...", "info")
-            subprocess.Popen(
-                [SERVER_PYTHON, str(SERVER_SCRIPT)],
-                cwd=str(SERVER_DIR),
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True,
-            )
-
-            for _ in range(25):
-                time.sleep(0.2)
-                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                sock.settimeout(0.3)
-                if sock.connect_ex((SERVER_HOST, SERVER_PORT)) == 0:
-                    sock.close()
-                    add_log("Server restarted and is accepting connections", "success")
-                    self._send_json({"success": True, "message": "Server restarted"})
-                    return
-                sock.close()
-
-            add_log("Server process started but is not yet accepting connections", "warning")
+        add_log("Restarting pychatter-server.service...", "warning")
+        result = self._systemctl("restart")
+        if result.returncode != 0:
+            err = (result.stderr or result.stdout).strip()
+            add_log(f"systemctl restart failed: {err}", "error")
+            self._send_json({"error": err or "systemctl restart failed"}, 500)
+            return
+        if self._wait_for_port():
+            add_log("Server restarted and is accepting connections", "success")
+            self._send_json({"success": True, "message": "Server restarted"})
+        else:
+            add_log("Restart issued but port 8765 is not yet accepting connections", "warning")
             self._send_json({"success": True, "message": "Restart issued, server is still starting"})
-        except Exception as e:
-            add_log(f"Restart failed: {str(e)}", "error")
-            self._send_json({"error": str(e)}, 500)
 
     def _stop_server(self) -> None:
-        try:
-            pid = self._find_server_pid()
-            if pid is None:
-                add_log("Stop requested but server.py was not running", "warning")
-                self._send_json({"success": True, "message": "Server was not running"})
-                return
-            add_log(f"Stopping server.py (pid {pid})...", "warning")
-            os.kill(pid, 15)
-            for _ in range(30):
-                time.sleep(0.2)
-                try:
-                    os.kill(pid, 0)
-                except ProcessLookupError:
-                    add_log("Server stopped", "success")
-                    self._send_json({"success": True, "message": "Server stopped"})
-                    return
-            os.kill(pid, 9)
-            add_log("Server force-killed after not responding to SIGTERM", "warning")
-            self._send_json({"success": True, "message": "Server force-stopped"})
-        except Exception as e:
-            add_log(f"Stop failed: {str(e)}", "error")
-            self._send_json({"error": str(e)}, 500)
+        add_log("Stopping pychatter-server.service...", "warning")
+        result = self._systemctl("stop")
+        if result.returncode != 0:
+            err = (result.stderr or result.stdout).strip()
+            add_log(f"systemctl stop failed: {err}", "error")
+            self._send_json({"error": err or "systemctl stop failed"}, 500)
+            return
+        add_log("Server stopped", "success")
+        self._send_json({"success": True, "message": "Server stopped"})
 
     def _start_server(self) -> None:
-        try:
-            if self._find_server_pid() is not None:
-                self._send_json({"error": "Server is already running"}, 400)
-                return
-            add_log("Starting server.py...", "info")
-            subprocess.Popen(
-                [SERVER_PYTHON, str(SERVER_SCRIPT)],
-                cwd=str(SERVER_DIR),
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True,
-            )
-            for _ in range(25):
-                time.sleep(0.2)
-                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                sock.settimeout(0.3)
-                if sock.connect_ex((SERVER_HOST, SERVER_PORT)) == 0:
-                    sock.close()
-                    add_log("Server started", "success")
-                    self._send_json({"success": True, "message": "Server started"})
-                    return
-                sock.close()
-            add_log("Server process started but is not yet accepting connections", "warning")
+        add_log("Starting pychatter-server.service...", "info")
+        result = self._systemctl("start")
+        if result.returncode != 0:
+            err = (result.stderr or result.stdout).strip()
+            add_log(f"systemctl start failed: {err}", "error")
+            self._send_json({"error": err or "systemctl start failed"}, 500)
+            return
+        if self._wait_for_port():
+            add_log("Server started", "success")
+            self._send_json({"success": True, "message": "Server started"})
+        else:
+            add_log("Start issued but port 8765 is not yet accepting connections", "warning")
             self._send_json({"success": True, "message": "Server starting"})
-        except Exception as e:
-            add_log(f"Start failed: {str(e)}", "error")
-            self._send_json({"error": str(e)}, 500)
 
     def _ban_user(self) -> None:
         content_length = int(self.headers.get("Content-Length", 0))
