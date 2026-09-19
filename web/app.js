@@ -321,12 +321,12 @@ async function createPeerConnection(peerUser, mode = "video") {
 async function startCall(mode = "video") {
   const targetName = selectedTarget();
   if (!targetName) {
-    alert("Select a friend or user first");
+    showError("Select a friend or user first");
     return;
   }
   const target = targetName.toLowerCase();
   if (target === state.username) {
-    alert("You cannot call yourself.");
+    showError("You cannot call yourself.");
     return;
   }
   if (getConnection()) {
@@ -631,9 +631,7 @@ function buildMsgToolbar(msgId, author) {
       const bodyEl = box?.querySelector(".msg-body");
       if (!bodyEl) return;
       const orig = bodyEl.dataset.raw || bodyEl.textContent;
-      const newText = prompt("Edit message", orig);
-      if (!newText || newText.trim() === orig) return;
-      send({ type: "edit_message", id: msgId, content: newText.trim() });
+      showEditMessageModal(msgId, orig);
     });
     bar.appendChild(editBtn);
   }
@@ -643,13 +641,50 @@ function buildMsgToolbar(msgId, author) {
     delBtn.textContent = "🗑️";
     delBtn.title = "Delete message";
     delBtn.addEventListener("click", () => {
-      if (!confirm("Delete this message?")) return;
-      send({ type: "delete_message", id: msgId });
+      showConfirmModal("Delete Message", "Are you sure you want to delete this message?", `handleDeleteMessage(${msgId})`);
     });
     bar.appendChild(delBtn);
   }
   return bar;
 }
+
+function showEditMessageModal(msgId, orig) {
+  const content = `
+    <div class="form-group">
+      <label class="form-label">Edit your message</label>
+      <input type="text" id="editMsgInput" class="form-input" value="${escapeHtml(orig)}" autofocus>
+    </div>
+  `;
+  const buttons = [
+    { label: "Cancel", type: "secondary", onclick: "closeModal()" },
+    { label: "Save", type: "primary", onclick: `submitEditMessage(${msgId})` },
+  ];
+  showModal("✏️ Edit Message", content, buttons);
+  setTimeout(() => {
+    const input = $("editMsgInput");
+    if (input) {
+      input.focus();
+      input.select();
+      input.addEventListener("keypress", (e) => {
+        if (e.key === "Enter") submitEditMessage(msgId);
+      });
+    }
+  }, 100);
+}
+
+window.submitEditMessage = function(msgId) {
+  const input = $("editMsgInput");
+  const newText = input?.value?.trim();
+  closeModal();
+  if (!newText) return;
+  send({ type: "edit_message", id: msgId, content: newText });
+};
+
+window.handleDeleteMessage = function(msgId) {
+  closeModal();
+  send({ type: "delete_message", id: msgId });
+  showSuccess("Message deleted");
+};
 
 function buildMessageEl(opts) {
   const isSystem = opts.type === "system";
@@ -973,10 +1008,13 @@ inputEl.addEventListener("input", () => {
 
 $("newChannelBtn").addEventListener("click", () => {
   if (!state.isAuthed) return;
-  const name = prompt("New channel name");
-  if (!name) return;
-  send({ type: "switch_channel", channel: name.trim().toLowerCase().replace(/\s+/g, "-") });
+  showPromptModal("📝 New Channel", "Enter channel name:", "handleNewChannel");
 });
+
+window.handleNewChannel = function(name) {
+  send({ type: "switch_channel", channel: name.trim().toLowerCase().replace(/\s+/g, "-") });
+  showSuccess(`Creating #${name}`);
+};
 
 $("refreshUsersBtn").addEventListener("click", () => {
   send({ type: "who" });
@@ -988,15 +1026,18 @@ $("socialSyncBtn").addEventListener("click", () => {
 
 $("addFriendBtn").addEventListener("click", () => {
   if (!state.isAuthed) return;
-  const target = prompt("Send friend request to username");
-  if (!target) return;
-  send({ type: "friend_request", to: target.trim().toLowerCase() });
+  showPromptModal("👥 Add Friend", "Enter username:", "handleAddFriend");
 });
+
+window.handleAddFriend = function(target) {
+  send({ type: "friend_request", to: target.trim().toLowerCase() });
+  showSuccess(`Friend request sent to ${target}`);
+};
 
 $("acceptFriendBtn").addEventListener("click", () => {
   if (!state.isAuthed) return;
   if (!state.selectedRequest) {
-    alert("Select a friend request first.");
+    showError("Select a friend request first.");
     return;
   }
   send({ type: "friend_accept", from: state.selectedRequest.toLowerCase() });
@@ -1005,19 +1046,27 @@ $("acceptFriendBtn").addEventListener("click", () => {
 $("removeFriendBtn").addEventListener("click", () => {
   if (!state.isAuthed) return;
   if (!state.selectedFriend) {
-    alert("Select a friend first.");
+    showError("Select a friend first.");
     return;
   }
-  if (!confirm(`Remove ${state.selectedFriend} from friends?`)) return;
-  send({ type: "friend_remove", user: state.selectedFriend.toLowerCase() });
+  showConfirmModal("Remove Friend", `Remove ${state.selectedFriend} from friends?`, `handleRemoveFriend()`);
 });
+
+window.handleRemoveFriend = function() {
+  closeModal();
+  send({ type: "friend_remove", user: state.selectedFriend.toLowerCase() });
+  showSuccess(`Removed ${state.selectedFriend} from friends`);
+};
 
 $("createVoiceRoomBtn").addEventListener("click", () => {
   if (!state.isAuthed) return;
-  const room = prompt("Voice room name");
-  if (!room) return;
-  send({ type: "voice_room_create", room: room.trim().toLowerCase().replace(/\s+/g, "-") });
+  showPromptModal("🎙️ Create Voice Room", "Enter room name:", "handleCreateVoiceRoom");
 });
+
+window.handleCreateVoiceRoom = function(room) {
+  send({ type: "voice_room_create", room: room.trim().toLowerCase().replace(/\s+/g, "-") });
+  showSuccess(`Creating voice room: ${room}`);
+};
 
 $("leaveVoiceRoomBtn").addEventListener("click", () => {
   if (!state.isAuthed) return;
@@ -1027,33 +1076,37 @@ $("leaveVoiceRoomBtn").addEventListener("click", () => {
 $("dmBtn").addEventListener("click", () => {
   const targetName = selectedTarget();
   if (!targetName) {
-    alert("Select a user first");
+    showError("Select a user first");
     return;
   }
-  const text = prompt(`DM to ${targetName}`);
-  if (!text) return;
-  send({ type: "dm", to: targetName.toLowerCase(), content: text.trim() });
+  showPromptModal(`💬 Message ${targetName}`, "Type your message:", "handleSendDM");
 });
 
+window.handleSendDM = function(text) {
+  const targetName = selectedTarget();
+  send({ type: "dm", to: targetName.toLowerCase(), content: text.trim() });
+  showSuccess(`Message sent to ${targetName}`);
+};
+
 $("changeNameBtn").addEventListener("click", () => {
-  if (!state.isAuthed) {
-    return;
-  }
-  const nextName = prompt("Enter your new username", state.username);
-  if (!nextName) {
-    return;
-  }
+  if (!state.isAuthed) return;
+  showPromptModal("✏️ Change Username", "Enter new username:", "handleChangeUsername");
+});
+
+window.handleChangeUsername = function(nextName) {
   const normalized = nextName.trim().toLowerCase();
   if (!normalized) {
+    showError("Username cannot be empty");
     return;
   }
   send({ type: "change_username", new_username: normalized });
-});
+  showSuccess(`Changing username to ${nextName}`);
+};
 
 $("dmHistoryBtn").addEventListener("click", () => {
   const targetName = selectedTarget();
   if (!targetName) {
-    alert("Select a user first");
+    showError("Select a user first");
     return;
   }
   send({ type: "dm_history", with: targetName.toLowerCase() });
@@ -1061,32 +1114,38 @@ $("dmHistoryBtn").addEventListener("click", () => {
 
 $("promoteBtn").addEventListener("click", () => {
   if (state.role !== "admin") {
-    alert("Only admins can set roles");
+    showError("Only admins can set roles");
     return;
   }
   if (!state.selectedUser) {
-    alert("Select a user first");
+    showError("Select a user first");
     return;
   }
-  const role = prompt("Role: member | mod | admin", "member");
-  if (!role) return;
-  const normalized = role.trim().toLowerCase();
-  if (!["member", "mod", "admin"].includes(normalized)) {
-    alert("Invalid role");
-    return;
-  }
-  send({ type: "promote", username: state.selectedUser.toLowerCase(), role: normalized });
+  const target = state.selectedUser;
+  const content = `<p style="color: var(--text); margin-bottom: 16px;">Select a role for <strong>${target}</strong>:</p>`;
+  const buttons = [
+    { label: "Member", type: "secondary", onclick: `applyRole('member')` },
+    { label: "Moderator", type: "secondary", onclick: `applyRole('mod')` },
+    { label: "Admin", type: "danger", onclick: `applyRole('admin')` },
+  ];
+  showModal("👑 Set Role", content, buttons);
 });
+
+window.applyRole = function(normalized) {
+  closeModal();
+  send({ type: "promote", username: state.selectedUser.toLowerCase(), role: normalized });
+  showSuccess(`${state.selectedUser} is now ${normalized}`);
+};
 
 $("voiceCallBtn").addEventListener("click", async () => {
   if (!state.isAuthed) return;
   ensureDefaultTarget();
   if (!navigator.mediaDevices || !window.RTCPeerConnection) {
-    alert("Your browser does not support WebRTC voice/video.");
+    showError("Your browser does not support WebRTC voice/video.");
     return;
   }
   if (!window.isSecureContext) {
-    alert("Voice calls require HTTPS (or localhost). Open this site over HTTPS.");
+    showError("Voice calls require HTTPS (or localhost). Open this site over HTTPS.");
     return;
   }
   await startCall("voice");
@@ -1097,11 +1156,11 @@ $("videoCallBtn").addEventListener("click", async () => {
   if (!state.isAuthed) return;
   ensureDefaultTarget();
   if (!navigator.mediaDevices || !window.RTCPeerConnection) {
-    alert("Your browser does not support WebRTC voice/video.");
+    showError("Your browser does not support WebRTC voice/video.");
     return;
   }
   if (!window.isSecureContext) {
-    alert("Video calls require HTTPS (or localhost). Open this site over HTTPS.");
+    showError("Video calls require HTTPS (or localhost). Open this site over HTTPS.");
     return;
   }
   await startCall("video");
@@ -1131,7 +1190,7 @@ $("blockUserBtn").addEventListener("click", () => {
   if (!state.isAuthed) return;
   const target = selectedTarget();
   if (!target) {
-    alert("Select a user first");
+    showError("Select a user first");
     return;
   }
   blockUserWithServer(target);
@@ -1140,10 +1199,12 @@ $("blockUserBtn").addEventListener("click", () => {
 
 $("unblockUserBtn").addEventListener("click", () => {
   if (!state.isAuthed) return;
-  const username = prompt("Enter username to unblock");
-  if (!username) return;
-  unblockUser(username);
+  showPromptModal("✅ Unblock User", "Enter username to unblock:", "handleUnblockUser");
 });
+
+window.handleUnblockUser = function(username) {
+  unblockUserWithServer(username);
+};
 
 // New Feature Event Listeners
 $("statusBtn").addEventListener("click", () => {
@@ -1276,19 +1337,19 @@ if (messageSearch) {
 $("bookmarkBtn").addEventListener("click", () => {
   const selected = messagesEl.querySelector(".msg");
   if (!selected) {
-    alert("No messages to bookmark");
+    showError("No messages to bookmark");
     return;
   }
   const msgId = selected.dataset.msgId;
   if (msgId && !state.bookmarkedMessages.has(msgId)) {
     bookmarkMessage(msgId);
-    alert("Message bookmarked!");
+    showError("Message bookmarked!");
   }
 });
 
 $("viewBookmarksBtn").addEventListener("click", () => {
   if (state.bookmarkedMessages.size === 0) {
-    alert("No bookmarked messages");
+    showError("No bookmarked messages");
     return;
   }
   addMessage("System", `── Bookmarked Messages (${state.bookmarkedMessages.size}) ──`, "system");
@@ -1296,20 +1357,26 @@ $("viewBookmarksBtn").addEventListener("click", () => {
 
 $("setNameColorBtn").addEventListener("click", () => {
   if (!state.isAuthed) return;
-  const color = prompt("Enter color name or hex code (e.g., red, #FF5733)", "#7289da");
-  if (!color) return;
-  send({ type: "set_profile", name_color: color });
+  showPromptModal("🎨 Set Name Color", "Enter color name or hex code (e.g., red, #7289da):", "handleSetNameColor");
 });
+
+window.handleSetNameColor = function(color) {
+  send({ type: "set_profile", name_color: color });
+  showSuccess("Name color updated");
+};
 
 $("setProfilePicBtn").addEventListener("click", () => {
   if (!state.isAuthed) return;
-  const url = prompt("Enter avatar image URL");
-  if (!url) return;
-  send({ type: "set_profile", avatar_url: url });
+  showPromptModal("🖼️ Set Avatar", "Enter avatar image URL:", "handleSetAvatar");
 });
 
+window.handleSetAvatar = function(url) {
+  send({ type: "set_profile", avatar_url: url });
+  showSuccess("Avatar updated");
+};
+
 $("settingsBtn").addEventListener("click", () => {
-  alert(`⚙️ Settings\n\n- Username: ${state.username}\n- Role: ${state.role}\n- Blocked Users: ${state.blockedUsers.length}\n- Bookmarks: ${state.bookmarkedMessages.size}`);
+  showError(`⚙️ Settings\n\n- Username: ${state.username}\n- Role: ${state.role}\n- Blocked Users: ${state.blockedUsers.length}\n- Bookmarks: ${state.bookmarkedMessages.size}`);
 });
 
 $("logoutBtn").addEventListener("click", () => {
