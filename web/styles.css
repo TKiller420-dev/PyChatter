@@ -611,7 +611,7 @@ body {
 .modal-content {
   background: var(--secondary);
   border: 1px solid #3a3f47;
-  border-radius: 12px;
+  border-radius: 8px;
   padding: 0;
   width: 90%;
   max-width: 500px;
@@ -815,6 +815,39 @@ body {
   height: 1px;
   background: #25282c;
   margin: 6px 2px;
+}
+
+/* Discord's real popout menus (account gear, member ⋯, status picker) are
+   small floating panels anchored next to their trigger button — notably
+   darker/near-black compared to modals, not a centered gray dialog. */
+.popout-menu {
+  position: fixed;
+  z-index: 1100;
+  min-width: 188px;
+  max-width: 260px;
+  background: #111214;
+  border-radius: 8px;
+  padding: 6px;
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.24), 0 0 0 1px rgba(0, 0, 0, 0.15);
+  animation: popoutIn 0.12s ease;
+}
+
+.popout-menu.hidden {
+  display: none;
+}
+
+.popout-menu-title {
+  padding: 8px 10px 4px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--senary);
+}
+
+@keyframes popoutIn {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1); }
 }
 
 /* Member row context menu trigger */

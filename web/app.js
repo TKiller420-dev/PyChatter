@@ -515,28 +515,29 @@ function buildMemberRow(name, role, isActive, onSelect) {
   if (ctxBtn) {
     ctxBtn.addEventListener("click", (e) => {
       e.stopPropagation();
-      openMemberContextMenu(name);
+      openMemberContextMenu(name, ctxBtn);
     });
   }
   return li;
 }
 
-function openMemberContextMenu(name) {
+function openMemberContextMenu(name, anchorEl) {
   const isBlocked = isUserBlocked(name);
   const isMod = state.role === "admin" || state.role === "mod";
-  const content = `<div class="menu-list">
-    ${menuRow("💬", "Message", `closeModal(); openDmComposer('${name}')`)}
-    ${menuRow("📜", "DM History", `closeModal(); openDmHistory('${name}')`)}
-    ${state.role === "admin" ? menuRow("👑", "Set Role", `closeModal(); openRoleSelector('${name}')`) : ""}
+  const content = `
+    <div class="popout-menu-title">${escapeHtml(name)}</div>
+    ${menuRow("💬", "Message", `closePopoutMenu(); openDmComposer('${name}')`)}
+    ${menuRow("📜", "DM History", `closePopoutMenu(); openDmHistory('${name}')`)}
+    ${state.role === "admin" ? menuRow("👑", "Set Role", `closePopoutMenu(); openRoleSelector('${name}')`) : ""}
     <div class="menu-divider"></div>
     ${isBlocked
-      ? menuRow("✅", "Unblock User", `closeModal(); unblockSelectedUser('${name}')`)
-      : menuRow("🚫", "Block User", `closeModal(); blockSelectedUser('${name}')`, true)}
+      ? menuRow("✅", "Unblock User", `closePopoutMenu(); unblockSelectedUser('${name}')`)
+      : menuRow("🚫", "Block User", `closePopoutMenu(); blockSelectedUser('${name}')`, true)}
     ${isMod ? `<div class="menu-divider"></div>` : ""}
-    ${isMod ? menuRow("⏱️", "Timeout User", `closeModal(); openTimeoutModal('${name}')`, true) : ""}
-    ${isMod ? menuRow("👢", "Kick User", `closeModal(); kickUser('${name}')`, true) : ""}
-  </div>`;
-  showModal(name, content, []);
+    ${isMod ? menuRow("⏱️", "Timeout User", `closePopoutMenu(); openTimeoutModal('${name}')`, true) : ""}
+    ${isMod ? menuRow("👢", "Kick User", `closePopoutMenu(); kickUser('${name}')`, true) : ""}
+  `;
+  showPopoutMenu(anchorEl || _lastClickPos, content, { alignRight: true });
 }
 
 // FEATURE 13/14: Moderation — kick & timeout
@@ -557,14 +558,15 @@ window.openTimeoutModal = function(name) {
     { label: "15 minutes", seconds: 900 },
     { label: "1 hour", seconds: 3600 },
   ];
-  const content = `<div class="menu-list">${durations.map(d =>
-    menuRow("⏱️", d.label, `applyTimeout('${name}', ${d.seconds})`)
-  ).join("")}</div>`;
-  showModal(`Timeout ${name}`, content, []);
+  const content = `
+    <div class="popout-menu-title">Timeout ${escapeHtml(name)}</div>
+    ${durations.map(d => menuRow("⏱️", d.label, `applyTimeout('${name}', ${d.seconds})`)).join("")}
+  `;
+  showPopoutMenu(_lastClickPos, content);
 };
 
 window.applyTimeout = function(name, seconds) {
-  closeModal();
+  closePopoutMenu();
   send({ type: "moderate_timeout", username: name.toLowerCase(), seconds });
   showSuccess(`${name} timed out`);
 };
@@ -1531,21 +1533,20 @@ function menuRow(icon, label, onclick, danger = false) {
   return `<button class="menu-row${danger ? " danger" : ""}" onclick="${onclick}"><span class="menu-row-icon">${icon}</span><span>${label}</span></button>`;
 }
 
-$("quickMenuBtn").addEventListener("click", () => {
+$("quickMenuBtn").addEventListener("click", (e) => {
+  e.stopPropagation();
   const content = `
-    <div class="menu-list">
-      ${menuRow("🟢", "Change Status", "showStatusSelector()")}
-      ${menuRow("💬", "Set Custom Status", "openCustomStatusModal()")}
-      ${menuRow("✏️", "Change Username", "openChangeUsername()")}
-      ${menuRow("🖼️", "Set Avatar", "openSetAvatar()")}
-      ${menuRow("🎨", "Set Name Color", "openSetNameColor()")}
-      ${menuRow("🔖", "View Bookmarks", "openBookmarksList()")}
-      ${menuRow("👤", "Account Info", "showAccountInfo()")}
-      <div class="menu-divider"></div>
-      ${menuRow("🚪", "Log Out", "doLogout()", true)}
-    </div>
+    ${menuRow("🟢", "Change Status", "closePopoutMenu(); showStatusSelector()")}
+    ${menuRow("💬", "Set Custom Status", "closePopoutMenu(); openCustomStatusModal()")}
+    ${menuRow("✏️", "Change Username", "closePopoutMenu(); openChangeUsername()")}
+    ${menuRow("🖼️", "Set Avatar", "closePopoutMenu(); openSetAvatar()")}
+    ${menuRow("🎨", "Set Name Color", "closePopoutMenu(); openSetNameColor()")}
+    ${menuRow("🔖", "View Bookmarks", "closePopoutMenu(); openBookmarksList()")}
+    ${menuRow("👤", "Account Info", "closePopoutMenu(); showAccountInfo()")}
+    <div class="menu-divider"></div>
+    ${menuRow("🚪", "Log Out", "doLogout()", true)}
   `;
-  showModal("Account", content, []);
+  showPopoutMenu($("quickMenuBtn"), content, { above: true });
 });
 
 window.showAccountInfo = function() {
@@ -1571,14 +1572,17 @@ const DISCORD_STATUSES = [
 ];
 
 window.showStatusSelector = function() {
-  const content = `<div class="menu-list">${DISCORD_STATUSES.map(s => `
-    <button class="menu-row" onclick="setUserStatus('${s.key}'); closeModal();">
-      <span class="status-swatch status-${s.key}"></span>
-      <span>${s.label}</span>
-      ${state.userStatus === s.key ? '<span style="margin-left:auto; color:var(--brand-2);">✓</span>' : ""}
-    </button>
-  `).join("")}</div>`;
-  showModal("Change Status", content, []);
+  const content = `
+    <div class="popout-menu-title">Change Status</div>
+    ${DISCORD_STATUSES.map(s => `
+      <button class="menu-row" onclick="setUserStatus('${s.key}'); closePopoutMenu();">
+        <span class="status-swatch status-${s.key}"></span>
+        <span>${s.label}</span>
+        ${state.userStatus === s.key ? '<span style="margin-left:auto; color:var(--brand-2);">✓</span>' : ""}
+      </button>
+    `).join("")}
+  `;
+  showPopoutMenu(_lastClickPos, content);
 };
 
 // Channel Search
@@ -2272,6 +2276,71 @@ function closeModal() {
   const overlay = $("modalOverlay");
   overlay.classList.remove("active");
 }
+
+// Discord's real account-gear / member-⋯ menus are small floating popouts
+// anchored next to the button that opened them, not centered dialogs.
+let _popoutCloseHandler = null;
+let _lastClickPos = { x: 0, y: 0 };
+document.addEventListener("click", (e) => {
+  _lastClickPos = { x: e.clientX, y: e.clientY };
+}, true);
+
+function showPopoutMenu(anchorElOrPoint, contentHtml, opts = {}) {
+  const popout = $("popoutMenu");
+  if (!popout || !anchorElOrPoint) return;
+
+  popout.innerHTML = `<div class="menu-list">${contentHtml}</div>`;
+  popout.classList.remove("hidden");
+
+  // Accept either a real element (getBoundingClientRect) or a plain
+  // {x, y} point — the latter is used when a nested popout opens from
+  // inside an onclick string, where no element reference survives.
+  const anchorEl = typeof anchorElOrPoint.getBoundingClientRect === "function" ? anchorElOrPoint : null;
+  const rect = anchorEl
+    ? anchorEl.getBoundingClientRect()
+    : { top: anchorElOrPoint.y, bottom: anchorElOrPoint.y, left: anchorElOrPoint.x, right: anchorElOrPoint.x };
+  // Measure after making visible so offsetWidth/Height are real.
+  const popW = popout.offsetWidth || 220;
+  const popH = popout.offsetHeight || 200;
+  const margin = 8;
+
+  let top;
+  if (opts.above) {
+    top = rect.top - popH - margin;
+  } else {
+    top = rect.bottom + margin;
+    if (top + popH > window.innerHeight - margin) {
+      top = rect.top - popH - margin; // flip above if it wouldn't fit below
+    }
+  }
+  let left = opts.alignRight ? rect.right - popW : rect.left;
+  left = Math.max(margin, Math.min(left, window.innerWidth - popW - margin));
+  top = Math.max(margin, top);
+
+  popout.style.top = `${top}px`;
+  popout.style.left = `${left}px`;
+
+  if (_popoutCloseHandler) {
+    document.removeEventListener("click", _popoutCloseHandler, true);
+  }
+  _popoutCloseHandler = (e) => {
+    const clickedAnchor = anchorEl && (e.target === anchorEl || anchorEl.contains(e.target));
+    if (!popout.contains(e.target) && !clickedAnchor) {
+      closePopoutMenu();
+    }
+  };
+  setTimeout(() => document.addEventListener("click", _popoutCloseHandler, true), 0);
+}
+
+function closePopoutMenu() {
+  const popout = $("popoutMenu");
+  if (popout) popout.classList.add("hidden");
+  if (_popoutCloseHandler) {
+    document.removeEventListener("click", _popoutCloseHandler, true);
+    _popoutCloseHandler = null;
+  }
+}
+window.closePopoutMenu = closePopoutMenu;
 
 function showPromptModal(title, label = "Enter value", onSubmit) {
   const content = `
