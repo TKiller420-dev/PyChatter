@@ -107,9 +107,11 @@ class ChatServer:
             )
             for room, members in self.voice_rooms.items()
         }
+        dm_partners = self.store.list_dm_partners(username)
         profile_names = set([username])
         profile_names.update(self.store.list_friends(username))
         profile_names.update(self.store.list_incoming_friend_requests(username))
+        profile_names.update(p["username"] for p in dm_partners)
         for members in voice_state.values():
             profile_names.update(members)
         profiles = self.store.get_user_profiles(sorted(profile_names))
@@ -125,6 +127,8 @@ class ChatServer:
                 "profiles": profiles,
                 "statuses": self._statuses_for(sorted(profile_names)),
                 "my_status": self.user_statuses.get(username, "online"),
+                "custom_statuses": {u: self.user_custom_status.get(u, "") for u in profile_names},
+                "dm_partners": dm_partners,
             },
         )
 
@@ -495,10 +499,17 @@ class ChatServer:
                     content = str(packet.get("content", "")).strip()
                     if not recipient or not content:
                         continue
+                    if recipient == sender:
+                        await self.send(writer, {"type": "action_error", "message": "You cannot DM yourself."})
+                        continue
+                    if not self.store.user_exists(recipient):
+                        await self.send(writer, {"type": "action_error", "message": f"User '{recipient}' does not exist."})
+                        continue
 
                     msg_id = fast_hash(f"dm:{sender}:{recipient}:{time.time_ns()}:{content}")
                     created_at = int(time.time())
                     self.store.save_dm(msg_id, sender, recipient, content)
+                    profile = self.store.get_user_profile(sender)
                     dm_packet = {
                         "type": "dm",
                         "id": msg_id,
@@ -506,6 +517,8 @@ class ChatServer:
                         "recipient": recipient,
                         "content": content,
                         "created_at": created_at,
+                        "author_avatar_url": profile.get("avatar_url", ""),
+                        "author_name_color": profile.get("name_color", ""),
                     }
                     self.store.log_event(
                         "direct_message",
@@ -526,6 +539,13 @@ class ChatServer:
                     if not peer_user:
                         continue
                     history = self.store.get_dm_history(requester, peer_user, limit=50)
+                    if history:
+                        authors = {str(m.get("sender", "")).strip().lower() for m in history}
+                        dm_profiles = self.store.get_user_profiles(sorted(authors))
+                        for m in history:
+                            p = dm_profiles.get(str(m.get("sender", "")).strip().lower(), {})
+                            m["author_avatar_url"] = p.get("avatar_url", "")
+                            m["author_name_color"] = p.get("name_color", "")
                     await self.send(
                         writer,
                         {
@@ -826,10 +846,16 @@ class ChatServer:
                     username = self.clients[writer]["username"]
                     message = str(packet.get("message", "")).strip()[:100]
                     self.user_custom_status[username] = message
-                    await self.send(writer, {
-                        "type": "system",
-                        "message": f"Custom status updated: {message or '(cleared)'}"
-                    })
+                    # Broadcast to everyone currently connected so their member
+                    # lists update live, regardless of channel/friend relationship —
+                    # cheap at this app's scale and simpler than tracking who
+                    # "can see" this user.
+                    update = {"type": "custom_status_update", "username": username, "message": message}
+                    for other_writer in list(self.clients.keys()):
+                        try:
+                            await self.send(other_writer, update)
+                        except Exception:
+                            pass
 
                 elif kind == "block_user":
                     if writer not in self.clients:

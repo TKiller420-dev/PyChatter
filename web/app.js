@@ -31,6 +31,10 @@ const state = {
   unreadCount: {}, // Feature 3: Unread message counts
   pinnedMessages: new Map(), // Feature 4: Pinned messages per channel
   replyingTo: null, // Feature 5: {id, author, content} of message being replied to
+  dmView: "", // username of the DM conversation currently open, "" = viewing a channel
+  dmPartners: [], // [{username, lastAt}] — people you've exchanged DMs with, most recent first
+  dmUnread: {}, // username -> unread count
+  customStatuses: {}, // username -> custom status message (server-synced, shown in member list)
   userTypingStatus: {}, // Feature 6: Who's typing
   recentMentions: [], // Feature 7: @mentions tracking
   memberStatuses: {}, // username -> "online" | "idle" | "dnd" | "offline" (server-synced)

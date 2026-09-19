@@ -786,6 +786,25 @@ class ChatStore:
         rows.reverse()
         return rows
 
+    def list_dm_partners(self, username: str, limit: int = 30) -> list[dict[str, Any]]:
+        username = username.strip().lower()
+        with self.lock:
+            cur = self.conn.cursor()
+            cur.execute(
+                """
+                SELECT
+                    CASE WHEN sender = ? THEN recipient ELSE sender END AS partner,
+                    MAX(created_at) AS last_at
+                FROM direct_messages
+                WHERE sender = ? OR recipient = ?
+                GROUP BY partner
+                ORDER BY last_at DESC
+                LIMIT ?
+                """,
+                (username, username, username, limit),
+            )
+            return [{"username": row["partner"], "lastAt": row["last_at"]} for row in cur.fetchall()]
+
     def user_exists(self, username: str) -> bool:
         username = username.strip().lower()
         with self.lock:
