@@ -205,11 +205,13 @@ body {
 }
 
 .members-pane {
-  background: var(--quaternary);
+  background: var(--secondary);
   border-left: 1px solid var(--line);
   border-right: 0;
   overflow: auto;
-  padding-top: 10px;
+  padding-top: 16px;
+  width: 240px;
+  flex-shrink: 0;
 }
 
 /* New Sidebar Styles */
@@ -794,6 +796,167 @@ body {
 
 .identity-presence.online {
   background: #43b581;
+}
+
+/* Discord-style Member List */
+.member-list-block {
+  position: relative;
+  padding: 0 0 12px;
+}
+
+.member-refresh-btn {
+  position: absolute;
+  top: 2px;
+  right: 10px;
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: transparent;
+  color: #8e9297;
+  font-size: 14px;
+  cursor: pointer;
+  border-radius: 4px;
+  opacity: 0;
+  transition: opacity 0.15s ease, color 0.15s ease, background 0.15s ease;
+  z-index: 1;
+}
+
+.member-list-block:hover .member-refresh-btn {
+  opacity: 1;
+}
+
+.member-refresh-btn:hover {
+  color: #dcddde;
+  background: rgba(79, 84, 92, 0.32);
+}
+
+.member-category {
+  list-style: none;
+  padding: 16px 8px 4px;
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: #8e9297;
+  cursor: default;
+}
+
+.member-category:first-child {
+  padding-top: 4px;
+}
+
+.member-row {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 8px;
+  margin: 1px 4px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.1s ease;
+}
+
+.member-row:hover {
+  background: rgba(79, 84, 92, 0.32);
+}
+
+.member-row.active {
+  background: rgba(79, 84, 92, 0.48);
+}
+
+.member-avatar-wrap {
+  position: relative;
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+}
+
+.member-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(145deg, #4f5562, #5e6775);
+  color: #f0f3f8;
+  font-size: 0.75rem;
+  font-weight: 700;
+  background-size: cover;
+  background-position: center;
+}
+
+.member-status {
+  position: absolute;
+  bottom: -2px;
+  right: -2px;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  border: 3px solid var(--secondary);
+  box-sizing: content-box;
+  background: #747f8d;
+}
+
+.member-status.status-online {
+  background: #3ba55d;
+}
+
+.member-status.status-idle {
+  background: #faa61a;
+}
+
+.member-status.status-dnd {
+  background: #ed4245;
+}
+
+.member-status.status-offline {
+  background: #747f8d;
+}
+
+.member-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 15px;
+  font-weight: 500;
+  color: #dcddde;
+}
+
+.member-row:hover .member-name {
+  color: #ffffff;
+}
+
+.member-role-badge {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.member-role-badge.role-admin {
+  background: rgba(237, 66, 69, 0.18);
+  color: #ed4245;
+}
+
+.member-role-badge.role-mod {
+  background: rgba(250, 166, 26, 0.18);
+  color: #faa61a;
+}
+
+/* Offline members render dimmed, Discord-style */
+.member-row.offline {
+  opacity: 0.42;
+}
+
+.member-row.offline:hover {
+  opacity: 0.7;
 }
 
 .list li:hover,

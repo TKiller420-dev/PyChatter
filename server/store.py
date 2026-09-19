@@ -429,15 +429,16 @@ class ChatStore:
         with self.lock:
             cur = self.conn.cursor()
             cur.execute(
-                "SELECT avatar_url, name_color FROM users WHERE username = ?",
+                "SELECT avatar_url, name_color, role FROM users WHERE username = ?",
                 (username,),
             )
             row = cur.fetchone()
             if row is None:
-                return {"avatar_url": "", "name_color": ""}
+                return {"avatar_url": "", "name_color": "", "role": "member"}
             return {
                 "avatar_url": str(row["avatar_url"] or ""),
                 "name_color": str(row["name_color"] or ""),
+                "role": str(row["role"] or "member"),
             }
 
     def get_user_profiles(self, usernames: list[str]) -> dict[str, dict[str, str]]:
@@ -448,7 +449,7 @@ class ChatStore:
         with self.lock:
             cur = self.conn.cursor()
             cur.execute(
-                f"SELECT username, avatar_url, name_color FROM users WHERE username IN ({placeholders})",
+                f"SELECT username, avatar_url, name_color, role FROM users WHERE username IN ({placeholders})",
                 cleaned,
             )
             rows = cur.fetchall()
@@ -458,6 +459,7 @@ class ChatStore:
             out[uname] = {
                 "avatar_url": str(row["avatar_url"] or ""),
                 "name_color": str(row["name_color"] or ""),
+                "role": str(row["role"] or "member"),
             }
         return out
 

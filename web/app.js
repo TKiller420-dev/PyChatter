@@ -209,13 +209,17 @@ function mergeProfiles(profiles) {
     state.profiles[String(username).toLowerCase()] = {
       avatar_url: String(profile.avatar_url || ""),
       name_color: String(profile.name_color || ""),
+      role: String(profile.role || "member"),
     };
   });
 }
 
 function profileFor(username) {
-  return state.profiles[String(username || "").toLowerCase()] || { avatar_url: "", name_color: "" };
+  return state.profiles[String(username || "").toLowerCase()] || { avatar_url: "", name_color: "", role: "member" };
 }
+
+const ROLE_GROUP_ORDER = ["admin", "mod", "member"];
+const ROLE_GROUP_LABELS = { admin: "Admins", mod: "Moderators", member: "Online" };
 
 function applySelfAvatar() {
   if (!selfAvatarEl) return;
@@ -450,9 +454,17 @@ function toggleLocalTrack(kind) {
 
 function renderUsers() {
   if (usersMetaEl) {
-    usersMetaEl.textContent = `Online - ${state.users.length}`;
+    usersMetaEl.textContent = `${state.users.length} online`;
   }
-  renderIdentityList(usersEl, state.users, state.selectedUser, (name) => {
+
+  const groups = { admin: [], mod: [], member: [] };
+  state.users.forEach((name) => {
+    const role = profileFor(name).role || "member";
+    (groups[role] || groups.member).push(name);
+  });
+
+  usersEl.innerHTML = "";
+  const onSelect = (name) => {
     state.selectedUser = name;
     if (state.friends.includes(name)) {
       state.selectedFriend = name;
@@ -460,7 +472,41 @@ function renderUsers() {
     }
     renderUsers();
     syncActionButtons();
-  }, { presence: true });
+  };
+
+  ROLE_GROUP_ORDER.forEach((role) => {
+    const members = groups[role].sort((a, b) => a.localeCompare(b));
+    if (members.length === 0) return;
+
+    const heading = document.createElement("li");
+    heading.className = "member-category";
+    heading.textContent = `${ROLE_GROUP_LABELS[role]} — ${members.length}`;
+    usersEl.appendChild(heading);
+
+    members.forEach((name) => {
+      usersEl.appendChild(buildMemberRow(name, role, name === state.selectedUser, onSelect));
+    });
+  });
+}
+
+function buildMemberRow(name, role, isActive, onSelect) {
+  const profile = profileFor(name);
+  const initial = escapeHtml((name || "?").slice(0, 1).toUpperCase());
+  const avatarStyle = profile.avatar_url ? ` style="background-image:url('${escapeHtml(profile.avatar_url)}')"` : "";
+  const nameStyle = profile.name_color ? ` style="color:${escapeHtml(profile.name_color)}"` : "";
+
+  const li = document.createElement("li");
+  li.className = "member-row" + (isActive ? " active" : "");
+  li.innerHTML = `
+    <span class="member-avatar-wrap">
+      <span class="member-avatar${profile.avatar_url ? " has-image" : ""}"${avatarStyle}>${profile.avatar_url ? "" : initial}</span>
+      <span class="member-status status-online"></span>
+    </span>
+    <span class="member-name"${nameStyle}>${escapeHtml(name)}</span>
+    ${role !== "member" ? `<span class="member-role-badge role-${role}">${role}</span>` : ""}
+  `;
+  li.addEventListener("click", () => onSelect(name));
+  return li;
 }
 
 function renderList(container, items, activeValue, onClick) {
