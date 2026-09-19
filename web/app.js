@@ -50,7 +50,6 @@ const messagesEl = $("messages");
 const inputEl = $("messageInput");
 const sendBtn = $("sendBtn");
 const statusText = $("statusText");
-const roleBadge = $("roleBadge");
 const channelTitle = $("channelTitle");
 const channelMeta = $("channelMeta");
 const authForm = $("authForm");
@@ -1013,7 +1012,6 @@ function handlePacket(packet) {
       } else if (!rememberMe.checked) {
         clearRemember();
       }
-      roleBadge.textContent = state.role;
       selfUser.textContent = state.username;
       applySelfAvatar();
       setAuthenticated(true);
@@ -1201,7 +1199,6 @@ function handlePacket(packet) {
       break;
     case "role_update":
       state.role = packet.role || state.role;
-      roleBadge.textContent = state.role;
       addMessage("System", `Role updated to ${state.role}`, "system");
       break;
     case "username_changed":
@@ -1393,6 +1390,17 @@ window.applyRole = function(normalized) {
   send({ type: "promote", username: state.selectedUser.toLowerCase(), role: normalized });
   showSuccess(`${state.selectedUser} is now ${normalized}`);
 };
+
+$("memberListToggleBtn")?.addEventListener("click", () => {
+  document.querySelector(".members-pane")?.classList.toggle("hidden");
+});
+
+$("topbarSearchBtn")?.addEventListener("click", () => {
+  const input = $("messageSearch");
+  if (!input) return;
+  input.scrollIntoView({ block: "nearest" });
+  input.focus();
+});
 
 $("voiceCallBtn").addEventListener("click", async () => {
   if (!state.isAuthed) return;

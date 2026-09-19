@@ -1496,19 +1496,27 @@ body {
   gap: 8px;
 }
 
+/* Discord's real topbar icons: plain glyph, no border/label chrome, just a
+   subtle hover highlight — not the bordered text-label buttons this used
+   to be ("Voice" / "Video" as words instead of icons). */
 .icon-call {
-  border: 1px solid #4d5160;
-  border-radius: 5px;
-  background: #3c414b;
-  color: #e8e9ec;
-  padding: 5px 9px;
-  font-weight: 700;
-  font-size: 0.75rem;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: #b5bac1;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 17px;
   cursor: pointer;
+  transition: background 0.1s ease, color 0.1s ease;
 }
 
 .icon-call:hover {
-  background: #4a505c;
+  background: rgba(79, 84, 92, 0.32);
+  color: #dbdee1;
 }
 
 .icon-call:disabled {
@@ -1516,16 +1524,11 @@ body {
   cursor: not-allowed;
 }
 
-.role-badge {
-  padding: 5px 9px;
-  border-radius: 999px;
-  border: 1px solid #335445;
-  background: #223c30;
-  color: #a8f1c8;
-  font-size: 0.69rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+.top-actions-divider {
+  width: 1px;
+  height: 24px;
+  background: var(--line);
+  margin: 0 4px;
 }
 
 .messages {
