@@ -249,27 +249,187 @@ body {
 }
 
 .status-badge {
-  font-size: 0.65rem;
-  padding: 2px 6px;
-  border-radius: 3px;
+  font-size: 0.72rem;
   margin-top: 2px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: 500;
+  color: #b9bbbe;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Discord-accurate status swatches: solid circle (online), crescent-cut
+   circle (idle), dashed circle (dnd), plain gray circle (offline/invisible) */
+.status-swatch {
+  position: relative;
   display: inline-block;
-  font-weight: 600;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #3ba55d;
+  flex-shrink: 0;
 }
 
-.status-badge.online {
-  background: rgba(59, 165, 93, 0.2);
-  color: var(--success);
+.status-swatch.status-online {
+  background: #3ba55d;
 }
 
-.status-badge.away {
-  background: rgba(250, 166, 26, 0.2);
-  color: #faa61a;
+.status-swatch.status-idle {
+  background: #faa61a;
 }
 
-.status-badge.dnd {
-  background: rgba(237, 66, 69, 0.2);
-  color: var(--danger);
+.status-swatch.status-idle::after {
+  content: "";
+  position: absolute;
+  width: 65%;
+  height: 65%;
+  border-radius: 50%;
+  background: var(--secondary);
+  top: -18%;
+  left: -18%;
+}
+
+.status-swatch.status-dnd {
+  background: #ed4245;
+}
+
+.status-swatch.status-dnd::after {
+  content: "";
+  position: absolute;
+  width: 58%;
+  height: 22%;
+  border-radius: 1px;
+  background: #ffffff;
+  top: 39%;
+  left: 21%;
+}
+
+.status-swatch.status-offline {
+  background: #747f8d;
+}
+
+/* Status button in the sidebar header — real swatch instead of a text dot */
+.status-selector {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.status-selector .status-swatch {
+  width: 12px;
+  height: 12px;
+}
+
+/* Self avatar in the footer user-card gets the same status-dot treatment
+   as member rows */
+.user-avatar-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.user-avatar-wrap .status-swatch {
+  position: absolute;
+  bottom: -2px;
+  right: -2px;
+  width: 13px;
+  height: 13px;
+  border: 3px solid var(--secondary);
+  box-sizing: content-box;
+}
+
+/* Custom status modal (mimics Discord's "Set a custom status" dialog) */
+.custom-status-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.emoji-trigger {
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  border: 1px solid #3a3f47;
+  background: var(--tertiary);
+  border-radius: 8px;
+  font-size: 20px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.emoji-trigger:hover {
+  border-color: var(--brand);
+}
+
+.emoji-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 4px;
+  margin-bottom: 16px;
+}
+
+.emoji-grid-btn {
+  border: none;
+  background: var(--tertiary);
+  border-radius: 6px;
+  padding: 6px 0;
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.emoji-grid-btn:hover {
+  background: #3a3f47;
+}
+
+/* Drag & drop avatar upload */
+.avatar-drop-zone {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px;
+  border: 2px dashed #3a3f47;
+  border-radius: 10px;
+  background: var(--tertiary);
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.avatar-drop-zone:hover,
+.avatar-drop-zone.dragging {
+  border-color: var(--brand);
+  background: rgba(88, 101, 242, 0.08);
+}
+
+.avatar-drop-preview {
+  width: 56px;
+  height: 56px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: linear-gradient(145deg, #4f5562, #5e6775);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  background-size: cover;
+  background-position: center;
+}
+
+.avatar-drop-text {
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.avatar-drop-text strong {
+  color: var(--title);
 }
 
 .quick-actions {
@@ -1139,7 +1299,7 @@ body {
 .chat-pane {
   background: var(--primary);
   display: grid;
-  grid-template-rows: auto 1fr auto auto;
+  grid-template-rows: auto auto auto 1fr auto auto auto;
   min-width: 0;
 }
 

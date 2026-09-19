@@ -468,12 +468,14 @@ class ChatStore:
         avatar_url = avatar_url.strip()
         name_color = name_color.strip().lower()
 
-        if avatar_url and len(avatar_url) > 500:
-            return False, "Profile picture URL is too long."
+        is_data_image = avatar_url.startswith("data:image/")
+        max_len = 300_000 if is_data_image else 500
+        if avatar_url and len(avatar_url) > max_len:
+            return False, "Profile picture is too large."
         if avatar_url and not (
             avatar_url.startswith("https://")
             or avatar_url.startswith("http://")
-            or avatar_url.startswith("data:image/")
+            or is_data_image
         ):
             return False, "Profile picture must be a valid URL (http/https) or data image."
 

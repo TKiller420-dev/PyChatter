@@ -431,7 +431,9 @@ async def tcp_to_browser(ws: Any, tcp_reader: asyncio.StreamReader):
 
 async def ws_handler(ws: Any):
     try:
-        reader, writer = await asyncio.open_connection(BACKEND_HOST, BACKEND_PORT)
+        reader, writer = await asyncio.open_connection(
+            BACKEND_HOST, BACKEND_PORT, limit=2 * 1024 * 1024
+        )
     except OSError as exc:
         await ws.send(f'{{"type":"auth_error","message":"Cannot reach backend server: {exc}"}}')
         await ws.close()

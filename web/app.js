@@ -33,6 +33,7 @@ const state = {
   messageThreads: new Map(), // Feature 5: Message threads/replies
   userTypingStatus: {}, // Feature 6: Who's typing
   recentMentions: [], // Feature 7: @mentions tracking
+  memberStatuses: {}, // username -> "online" | "idle" | "dnd" | "offline" (server-synced)
   rtc: {
     pc: null,
     localStream: null,
@@ -495,13 +496,14 @@ function buildMemberRow(name, role, isActive, onSelect) {
   const avatarStyle = profile.avatar_url ? ` style="background-image:url('${escapeHtml(profile.avatar_url)}')"` : "";
   const nameStyle = profile.name_color ? ` style="color:${escapeHtml(profile.name_color)}"` : "";
   const isSelf = name === state.username;
+  const status = isSelf ? state.userStatus : (state.memberStatuses[name] || "online");
 
   const li = document.createElement("li");
-  li.className = "member-row" + (isActive ? " active" : "");
+  li.className = "member-row" + (isActive ? " active" : "") + (status === "offline" ? " offline" : "");
   li.innerHTML = `
     <span class="member-avatar-wrap">
       <span class="member-avatar${profile.avatar_url ? " has-image" : ""}"${avatarStyle}>${profile.avatar_url ? "" : initial}</span>
-      <span class="member-status status-online"></span>
+      <span class="member-status status-${status}"></span>
     </span>
     <span class="member-name"${nameStyle}>${escapeHtml(name)}</span>
     ${role !== "member" ? `<span class="member-role-badge role-${role}">${role}</span>` : ""}
@@ -966,6 +968,11 @@ function handlePacket(packet) {
       state.voiceState = packet.voice_state || {};
       state.currentVoiceRoom = packet.voice_room || "";
       mergeProfiles(packet.profiles || {});
+      Object.assign(state.memberStatuses, packet.statuses || {});
+      if (packet.my_status) {
+        state.userStatus = packet.my_status;
+        updateStatusBadge();
+      }
       if (state.selectedFriend && !state.friends.includes(state.selectedFriend)) state.selectedFriend = "";
       if (state.selectedRequest && !state.incomingRequests.includes(state.selectedRequest)) state.selectedRequest = "";
       if (state.selectedVoiceRoom && !state.voiceRooms.includes(state.selectedVoiceRoom)) state.selectedVoiceRoom = "";
@@ -1016,6 +1023,7 @@ function handlePacket(packet) {
     case "user_list":
       state.users = packet.users || [];
       mergeProfiles(packet.profiles || {});
+      Object.assign(state.memberStatuses, packet.statuses || {});
       if (state.selectedUser && !state.users.includes(state.selectedUser) && !state.friends.includes(state.selectedUser)) {
         state.selectedUser = "";
       }
@@ -1369,11 +1377,7 @@ window.handleUnblockUser = function(username) {
 
 // New Feature Event Listeners
 $("statusBtn").addEventListener("click", () => {
-  const statuses = ["online", "away", "dnd", "offline"];
-  const current = statuses.indexOf(state.userStatus);
-  const next = statuses[(current + 1) % statuses.length];
-  setUserStatus(next);
-  showSuccess(`Status changed to ${next}`);
+  showStatusSelector();
 });
 
 $("searchUsersGlobalBtn").addEventListener("click", () => {
@@ -1432,7 +1436,7 @@ $("quickMenuBtn").addEventListener("click", () => {
   const content = `
     <div class="menu-list">
       ${menuRow("🟢", "Change Status", "showStatusSelector()")}
-      ${menuRow("💬", "Set Status Message", "showPromptModal('Set Custom Status', 'Enter your status message', 'setCustomStatusFromModal')")}
+      ${menuRow("💬", "Set Custom Status", "openCustomStatusModal()")}
       ${menuRow("✏️", "Change Username", "openChangeUsername()")}
       ${menuRow("🖼️", "Set Avatar", "openSetAvatar()")}
       ${menuRow("🎨", "Set Name Color", "openSetNameColor()")}
@@ -1444,11 +1448,6 @@ $("quickMenuBtn").addEventListener("click", () => {
   `;
   showModal("Account", content, []);
 });
-
-window.setCustomStatusFromModal = function(msg) {
-  setCustomStatus(msg);
-  showSuccess("Custom status updated");
-};
 
 window.showAccountInfo = function() {
   const info = `
@@ -1465,16 +1464,21 @@ window.showAccountInfo = function() {
   ]);
 };
 
+const DISCORD_STATUSES = [
+  { key: "online", label: "Online" },
+  { key: "idle", label: "Idle" },
+  { key: "dnd", label: "Do Not Disturb" },
+  { key: "offline", label: "Invisible" },
+];
+
 window.showStatusSelector = function() {
-  const statuses = [
-    { key: "online", label: "Online", dot: "🟢" },
-    { key: "away", label: "Away", dot: "🟡" },
-    { key: "dnd", label: "Do Not Disturb", dot: "🔴" },
-    { key: "offline", label: "Invisible", dot: "⚪" },
-  ];
-  const content = `<div class="menu-list">${statuses.map(s =>
-    menuRow(s.dot, s.label, `setUserStatus('${s.key}'); closeModal();`)
-  ).join("")}</div>`;
+  const content = `<div class="menu-list">${DISCORD_STATUSES.map(s => `
+    <button class="menu-row" onclick="setUserStatus('${s.key}'); closeModal();">
+      <span class="status-swatch status-${s.key}"></span>
+      <span>${s.label}</span>
+      ${state.userStatus === s.key ? '<span style="margin-left:auto; color:var(--brand-2);">✓</span>' : ""}
+    </button>
+  `).join("")}</div>`;
   showModal("Change Status", content, []);
 };
 
@@ -1649,11 +1653,114 @@ window.handleSetNameColor = function(color) {
 
 window.openSetAvatar = function() {
   if (!state.isAuthed) return;
-  showPromptModal("🖼️ Set Avatar", "Enter avatar image URL:", "handleSetAvatar");
+  const content = `
+    <div id="avatarDropZone" class="avatar-drop-zone">
+      <div id="avatarDropPreview" class="avatar-drop-preview">🖼️</div>
+      <div class="avatar-drop-text">
+        <strong>Drag & drop an image</strong><br>
+        or click to browse
+      </div>
+      <input type="file" id="avatarFileInput" accept="image/*" style="display:none;">
+    </div>
+    <div class="form-group" style="margin-top:14px;">
+      <label class="form-label">Or paste an image URL</label>
+      <input type="text" id="avatarUrlInput" class="form-input" placeholder="https://...">
+    </div>
+  `;
+  showModal("🖼️ Set Avatar", content, [
+    { label: "Cancel", type: "secondary", onclick: "closeModal()" },
+    { label: "Save", type: "primary", onclick: "submitAvatarFromModal()" },
+  ]);
+  setTimeout(initAvatarDropZone, 50);
 };
 
-window.handleSetAvatar = function(url) {
-  send({ type: "set_profile", avatar_url: url });
+let _pendingAvatarDataUrl = "";
+
+function initAvatarDropZone() {
+  const zone = $("avatarDropZone");
+  const fileInput = $("avatarFileInput");
+  const preview = $("avatarDropPreview");
+  if (!zone || !fileInput) return;
+
+  _pendingAvatarDataUrl = "";
+
+  zone.addEventListener("click", () => fileInput.click());
+
+  fileInput.addEventListener("change", () => {
+    if (fileInput.files && fileInput.files[0]) {
+      processAvatarFile(fileInput.files[0], preview);
+    }
+  });
+
+  ["dragenter", "dragover"].forEach((evt) => {
+    zone.addEventListener(evt, (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      zone.classList.add("dragging");
+    });
+  });
+
+  ["dragleave", "dragend"].forEach((evt) => {
+    zone.addEventListener(evt, (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      zone.classList.remove("dragging");
+    });
+  });
+
+  zone.addEventListener("drop", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    zone.classList.remove("dragging");
+    const file = e.dataTransfer?.files?.[0];
+    if (file) processAvatarFile(file, preview);
+  });
+}
+
+function processAvatarFile(file, preview) {
+  if (!file.type.startsWith("image/")) {
+    showError("Please choose an image file");
+    return;
+  }
+  if (file.size > 8 * 1024 * 1024) {
+    showError("Image too large (max 8MB)");
+    return;
+  }
+
+  const reader = new FileReader();
+  reader.onload = () => {
+    const img = new Image();
+    img.onload = () => {
+      // Downscale to a reasonable avatar size so the data URL stays small
+      const maxSize = 256;
+      const scale = Math.min(1, maxSize / Math.max(img.width, img.height));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      _pendingAvatarDataUrl = canvas.toDataURL("image/jpeg", 0.85);
+      if (preview) {
+        preview.style.backgroundImage = `url(${_pendingAvatarDataUrl})`;
+        preview.style.backgroundSize = "cover";
+        preview.style.backgroundPosition = "center";
+        preview.textContent = "";
+      }
+    };
+    img.src = reader.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+window.submitAvatarFromModal = function() {
+  const urlInput = $("avatarUrlInput")?.value?.trim();
+  const avatarUrl = _pendingAvatarDataUrl || urlInput;
+  if (!avatarUrl) {
+    showError("Choose an image or paste a URL first");
+    return;
+  }
+  closeModal();
+  send({ type: "set_profile", avatar_url: avatarUrl });
   showSuccess("Avatar updated");
 };
 
@@ -1696,28 +1803,122 @@ showRegisterBtn.addEventListener("click", () => setAuthMode("register"));
 
 // FEATURE 1: User Presence & Status System (Server-synced)
 function setUserStatus(newStatus) {
-  const validStatuses = ["online", "away", "dnd", "offline"];
+  if (newStatus === "away") newStatus = "idle"; // legacy alias
+  const validStatuses = ["online", "idle", "dnd", "offline"];
   if (validStatuses.includes(newStatus)) {
     state.userStatus = newStatus;
     updateStatusBadge();
     localStorage.setItem("pychatter.status", newStatus);
     send({ type: "set_status", status: newStatus });
-    addMessage("System", `Status changed to ${newStatus}`, "system");
+    showSuccess(`Status set to ${DISCORD_STATUSES.find(s => s.key === newStatus)?.label || newStatus}`);
   }
 }
 
-function setCustomStatus(message) {
+let _customStatusClearTimer = null;
+
+function setCustomStatus(message, clearAfterMs = null) {
   state.customStatus = message;
   localStorage.setItem("pychatter.customStatus", message);
   send({ type: "set_custom_status", message });
+  updateStatusBadge();
+
+  if (_customStatusClearTimer) {
+    clearTimeout(_customStatusClearTimer);
+    _customStatusClearTimer = null;
+  }
+  if (clearAfterMs) {
+    _customStatusClearTimer = setTimeout(() => setCustomStatus(""), clearAfterMs);
+  }
 }
+
+// Discord's own suggested custom statuses
+const CUSTOM_STATUS_SUGGESTIONS = [
+  { emoji: "💡", text: "Working on something" },
+  { emoji: "🎯", text: "Focusing" },
+  { emoji: "📅", text: "In a meeting" },
+  { emoji: "🌙", text: "Sleeping" },
+  { emoji: "🍕", text: "Eating" },
+  { emoji: "🏖️", text: "Vacationing" },
+];
+
+const CUSTOM_STATUS_EMOJI = ["😀", "🎮", "🎵", "📚", "💻", "☕", "🔥", "💤", "🚀", "❤️", "😴", "🤒"];
+
+window.openCustomStatusModal = function() {
+  const [savedEmoji, ...rest] = (state.customStatus || "").split(" ");
+  const isEmoji = /\p{Emoji}/u.test(savedEmoji || "");
+  const currentEmoji = isEmoji ? savedEmoji : "😀";
+  const currentText = isEmoji ? rest.join(" ") : (state.customStatus || "");
+
+  const content = `
+    <div class="custom-status-row">
+      <button class="emoji-trigger" id="statusEmojiTrigger" type="button">${currentEmoji}</button>
+      <input type="text" id="customStatusText" class="form-input" placeholder="What's happening?" value="${escapeHtml(currentText)}" maxlength="100">
+    </div>
+    <div class="emoji-grid" id="statusEmojiGrid">
+      ${CUSTOM_STATUS_EMOJI.map(e => `<button class="emoji-grid-btn" onclick="document.getElementById('statusEmojiTrigger').textContent='${e}'">${e}</button>`).join("")}
+    </div>
+    <div class="form-group">
+      <label class="form-label">Suggestions</label>
+      <div class="menu-list">
+        ${CUSTOM_STATUS_SUGGESTIONS.map(s => `
+          <button class="menu-row" onclick="document.getElementById('statusEmojiTrigger').textContent='${s.emoji}'; document.getElementById('customStatusText').value='${s.text}';">
+            <span class="menu-row-icon">${s.emoji}</span><span>${s.text}</span>
+          </button>
+        `).join("")}
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Clear after</label>
+      <select id="customStatusClear" class="form-input">
+        <option value="0">Don't clear</option>
+        <option value="1800000">30 minutes</option>
+        <option value="3600000">1 hour</option>
+        <option value="14400000">4 hours</option>
+        <option value="86400000">Today</option>
+      </select>
+    </div>
+  `;
+  showModal("Set a custom status", content, [
+    { label: "Clear Status", type: "secondary", onclick: "clearCustomStatus()" },
+    { label: "Save", type: "primary", onclick: "submitCustomStatus()" },
+  ]);
+};
+
+window.submitCustomStatus = function() {
+  const emoji = $("statusEmojiTrigger")?.textContent || "";
+  const text = $("customStatusText")?.value?.trim() || "";
+  const clearAfter = parseInt($("customStatusClear")?.value || "0", 10);
+  closeModal();
+  if (!text) {
+    showError("Enter a status message");
+    return;
+  }
+  setCustomStatus(`${emoji} ${text}`, clearAfter || null);
+  showSuccess("Status updated");
+};
+
+window.clearCustomStatus = function() {
+  closeModal();
+  setCustomStatus("");
+  showInfo("Custom status cleared");
+};
 
 function updateStatusBadge() {
   const badge = $("statusBadge");
   if (badge) {
-    badge.className = `status-badge ${state.userStatus}`;
-    badge.textContent = state.userStatus.charAt(0).toUpperCase() + state.userStatus.slice(1);
+    const label = DISCORD_STATUSES.find(s => s.key === state.userStatus)?.label || "Online";
+    const customPart = state.customStatus ? ` — ${escapeHtml(state.customStatus)}` : "";
+    badge.innerHTML = `<span class="status-swatch status-${state.userStatus}"></span>${label}${customPart}`;
   }
+  const selfDot = $("selfStatusDot");
+  if (selfDot) {
+    selfDot.className = `status-swatch status-${state.userStatus}`;
+  }
+  const statusBtnDot = document.querySelector("#statusBtn .status-swatch");
+  if (statusBtnDot) {
+    statusBtnDot.className = `status-swatch status-${state.userStatus}`;
+  }
+  renderUsers(); // refresh own row's status dot in the member list
 }
 
 // FEATURE 2: Favorite Channels/Users (Client-side localStorage)

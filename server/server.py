@@ -74,6 +74,9 @@ class ChatServer:
         for writer in writers:
             await writer.drain()
 
+    def _statuses_for(self, usernames: list[str]) -> Dict[str, str]:
+        return {u: self.user_statuses.get(u, "online") for u in usernames}
+
     async def send_roster(self, channel: str) -> None:
         users = sorted(
             [
@@ -90,6 +93,7 @@ class ChatServer:
                 "channel": channel,
                 "users": users,
                 "profiles": profiles,
+                "statuses": self._statuses_for(users),
             },
         )
 
@@ -119,6 +123,8 @@ class ChatServer:
                 "voice_state": voice_state,
                 "voice_room": self.voice_by_writer.get(writer, ""),
                 "profiles": profiles,
+                "statuses": self._statuses_for(sorted(profile_names)),
+                "my_status": self.user_statuses.get(username, "online"),
             },
         )
 
@@ -782,10 +788,14 @@ class ChatServer:
                         continue
                     username = self.clients[writer]["username"]
                     status = str(packet.get("status", "online")).strip().lower()
-                    if status not in {"online", "away", "dnd", "offline"}:
+                    if status == "away":  # accept legacy alias
+                        status = "idle"
+                    if status not in {"online", "idle", "dnd", "offline"}:
                         status = "online"
                     self.user_statuses[username] = status
                     self.clients[writer]["status"] = status
+                    channel = self.client_channels.get(writer, "general")
+                    await self.send_roster(channel)
                     await self.broadcast_social_state()
 
                 elif kind == "set_custom_status":
@@ -923,7 +933,10 @@ async def main() -> None:
     server = ChatServer()
 
     try:
-        srv = await asyncio.start_server(server.handle_client, host, port)
+        # Default StreamReader limit is 64KB per line, which a base64 avatar
+        # data-URL packet can exceed; raise it so those messages don't blow
+        # up the read loop.
+        srv = await asyncio.start_server(server.handle_client, host, port, limit=2 * 1024 * 1024)
     except OSError as exc:
         if exc.errno == 98:
             print(

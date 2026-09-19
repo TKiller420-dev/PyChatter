@@ -54,10 +54,10 @@
           <div class="server-icon">⚡</div>
           <div class="server-info">
             <div class="server-title">PyChatter</div>
-            <div id="statusBadge" class="status-badge online">Online</div>
+            <div id="statusBadge" class="status-badge"><span class="status-swatch status-online"></span>Online</div>
           </div>
         </div>
-        <button id="statusBtn" class="icon-btn status-selector" title="Set Status" type="button">●</button>
+        <button id="statusBtn" class="icon-btn status-selector" title="Set Status" type="button"><span class="status-swatch status-online"></span></button>
       </div>
 
       <!-- Quick Actions Bar -->
@@ -92,7 +92,10 @@
       <!-- Footer with User Card -->
       <footer class="pane-footer">
         <div class="user-card">
-          <div id="selfAvatar" class="user-avatar"></div>
+          <div class="user-avatar-wrap">
+            <div id="selfAvatar" class="user-avatar"></div>
+            <span id="selfStatusDot" class="status-swatch status-online"></span>
+          </div>
           <div class="user-details">
             <div id="selfUser" class="user-name">guest</div>
             <div id="statusText" class="user-status">Connecting...</div>
