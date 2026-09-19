@@ -48,35 +48,58 @@
     </aside>
 
     <aside class="channels-pane">
-      <div class="pane-title">PyChatter</div>
-      <section class="pane-block">
-        <div class="block-head">
-          <h2>Text Channels</h2>
-          <button id="newChannelBtn" class="icon-btn" title="New Channel" type="button">+</button>
+      <!-- Header with Profile -->
+      <div class="pane-header">
+        <div class="server-name">
+          <div class="server-icon">⚡</div>
+          <div class="server-info">
+            <div class="server-title">PyChatter</div>
+            <div id="statusBadge" class="status-badge online">Online</div>
+          </div>
         </div>
+        <button id="statusBtn" class="icon-btn status-selector" title="Set Status" type="button">●</button>
+      </div>
+
+      <!-- Quick Actions Bar -->
+      <div class="quick-actions">
+        <button id="searchUsersGlobalBtn" class="quick-action-btn" title="Search Users">🔍</button>
+        <button id="favoritesBtn" class="quick-action-btn" title="Favorites">⭐</button>
+        <button id="unreadBtn" class="quick-action-btn" title="Unread Messages">🔔</button>
+        <button id="newChannelBtn" class="quick-action-btn" title="New Channel">➕</button>
+      </div>
+
+      <!-- Channels Section -->
+      <section class="pane-section">
+        <div class="section-header">
+          <h3>Channels</h3>
+          <span class="channel-count" id="channelCount">0</span>
+        </div>
+        <input type="text" id="channelSearch" class="search-input" placeholder="Find channel...">
         <ul id="channels" class="list channel-list"></ul>
       </section>
-      <section class="pane-block">
-        <div class="block-head">
-          <h2>Voice Channels</h2>
+
+      <!-- Voice Rooms Section -->
+      <section class="pane-section">
+        <div class="section-header">
+          <h3>Voice</h3>
+          <button id="createVoiceRoomBtn" class="icon-btn" title="Create" type="button">+</button>
         </div>
         <ul id="voiceRoomsList" class="list voice-list"></ul>
-        <div id="voiceRoomMeta" class="submeta">Not in a room</div>
-        <div class="stack">
-          <button id="createVoiceRoomBtn" class="btn ghost" type="button">Create Voice Room</button>
-          <button id="leaveVoiceRoomBtn" class="btn ghost" type="button">Leave Voice Room</button>
-        </div>
+        <div id="voiceRoomMeta" class="voice-meta">Not in a room</div>
+        <button id="leaveVoiceRoomBtn" class="btn-small ghost" type="button">Leave Room</button>
       </section>
-      <footer class="self-card">
-        <div id="selfAvatar" class="self-avatar"></div>
-        <div class="self-block">
-          <div id="selfUser" class="self-user">guest</div>
-          <div id="statusText" class="self-meta">Connecting...</div>
-        </div>
-        <div class="self-icons" aria-hidden="true">
-          <span>M</span>
-          <span>H</span>
-          <span>S</span>
+
+      <!-- Footer with User Card -->
+      <footer class="pane-footer">
+        <div class="user-card">
+          <div id="selfAvatar" class="user-avatar"></div>
+          <div class="user-details">
+            <div id="selfUser" class="user-name">guest</div>
+            <div id="statusText" class="user-status">Connecting...</div>
+          </div>
+          <div class="user-actions">
+            <button id="quickMenuBtn" class="icon-btn" title="Menu">⋮</button>
+          </div>
         </div>
       </footer>
     </aside>

@@ -25,6 +25,14 @@ const state = {
   userSearch: "",
   reconnectAttempts: 0,
   maxReconnectAttempts: 10,
+  userStatus: "online", // Feature 1: User presence status
+  customStatus: "", // Feature 1b: Custom status message
+  favorites: new Set(), // Feature 2: Favorite channels/users
+  unreadCount: {}, // Feature 3: Unread message counts
+  pinnedMessages: new Map(), // Feature 4: Pinned messages per channel
+  messageThreads: new Map(), // Feature 5: Message threads/replies
+  userTypingStatus: {}, // Feature 6: Who's typing
+  recentMentions: [], // Feature 7: @mentions tracking
   rtc: {
     pc: null,
     localStream: null,
@@ -1137,6 +1145,104 @@ $("unblockUserBtn").addEventListener("click", () => {
   unblockUser(username);
 });
 
+// New Feature Event Listeners
+$("statusBtn").addEventListener("click", () => {
+  const statuses = ["online", "away", "dnd", "offline"];
+  const current = statuses.indexOf(state.userStatus);
+  const next = statuses[(current + 1) % statuses.length];
+  setUserStatus(next);
+  showNotification("Status Changed", { body: `You are now ${next}` });
+});
+
+$("searchUsersGlobalBtn").addEventListener("click", () => {
+  const query = prompt("Search users:");
+  if (!query) return;
+  const results = performGlobalSearch(query);
+  if (results.users.length === 0 && results.channels.length === 0) {
+    alert("No results found");
+    return;
+  }
+  addMessage("System", `── Search Results for "${query}" ──`, "system");
+  if (results.users.length > 0) {
+    addMessage("System", `Users: ${results.users.join(", ")}`, "system");
+  }
+  if (results.channels.length > 0) {
+    addMessage("System", `Channels: ${results.channels.join(", ")}`, "system");
+  }
+});
+
+$("favoritesBtn").addEventListener("click", () => {
+  if (!state.isAuthed) return;
+  if (state.favorites.size === 0) {
+    alert("No favorites yet. Star channels to add them.");
+    return;
+  }
+  addMessage("System", `── Your Favorites (${state.favorites.size}) ──`, "system");
+  state.favorites.forEach(fav => {
+    addMessage("System", `⭐ ${fav}`, "system");
+  });
+});
+
+$("unreadBtn").addEventListener("click", () => {
+  const unread = Object.entries(state.unreadCount)
+    .filter(([_, count]) => count > 0)
+    .map(([ch, count]) => `#${ch} (${count})`)
+    .join(", ");
+
+  if (!unread) {
+    alert("All caught up! No unread messages.");
+    return;
+  }
+  alert(`Unread messages:\n${unread}`);
+});
+
+$("quickMenuBtn").addEventListener("click", () => {
+  const menu = prompt(`⚙️ Quick Menu\n\n1. Set Custom Status\n2. View Account Info\n3. Change Status\n\nEnter option (1-3):`);
+  switch (menu) {
+    case "1":
+      const customMsg = prompt("Enter custom status (leave blank to clear):");
+      setCustomStatus(customMsg || "");
+      break;
+    case "2":
+      alert(`📊 Account Info\n\nUsername: ${state.username}\nRole: ${state.role}\nStatus: ${state.userStatus}\nChannels: ${state.channels.length}\nFriends: ${state.friends.length}`);
+      break;
+    case "3":
+      const newStatus = prompt("Enter status (online/away/dnd/offline):");
+      if (["online", "away", "dnd", "offline"].includes(newStatus)) {
+        setUserStatus(newStatus);
+      }
+      break;
+  }
+});
+
+// Channel Search
+const channelSearch = $("channelSearch");
+if (channelSearch) {
+  channelSearch.addEventListener("input", (e) => {
+    if (e.target.value) {
+      filterChannelList(e.target.value);
+    } else {
+      renderChannels();
+    }
+  });
+}
+
+// Message Search
+const messageSearch = $("messageSearch");
+if (messageSearch) {
+  messageSearch.addEventListener("input", (e) => {
+    const query = e.target.value.toLowerCase();
+    if (!query) {
+      document.querySelectorAll(".msg").forEach(m => m.style.opacity = "1");
+      return;
+    }
+    document.querySelectorAll(".msg").forEach(m => {
+      const content = m.textContent.toLowerCase();
+      m.style.opacity = content.includes(query) ? "1" : "0.3";
+    });
+  });
+}
+
 $("bookmarkBtn").addEventListener("click", () => {
   const selected = messagesEl.querySelector(".msg");
   if (!selected) {
@@ -1208,6 +1314,202 @@ showRegisterBtn.addEventListener("click", () => setAuthMode("register"));
     $("usernameInput").value = remembered.username;
     rememberMe.checked = true;
   }
+}
+
+// ─── 10 New Functional Features ──────────────────────────────────────────────
+
+// FEATURE 1: User Presence & Status System
+function setUserStatus(newStatus) {
+  const validStatuses = ["online", "away", "dnd", "offline"];
+  if (validStatuses.includes(newStatus)) {
+    state.userStatus = newStatus;
+    updateStatusBadge();
+    send({ type: "set_status", status: newStatus });
+    localStorage.setItem("pychatter.status", newStatus);
+  }
+}
+
+function setCustomStatus(message) {
+  state.customStatus = message;
+  send({ type: "set_custom_status", message });
+  localStorage.setItem("pychatter.customStatus", message);
+}
+
+function updateStatusBadge() {
+  const badge = $("statusBadge");
+  if (badge) {
+    badge.className = `status-badge ${state.userStatus}`;
+    badge.textContent = state.userStatus.charAt(0).toUpperCase() + state.userStatus.slice(1);
+  }
+}
+
+// FEATURE 2: Favorite Channels/Users
+function toggleFavorite(item) {
+  if (state.favorites.has(item)) {
+    state.favorites.delete(item);
+  } else {
+    state.favorites.add(item);
+  }
+  saveFavorites();
+  renderChannels();
+}
+
+function saveFavorites() {
+  localStorage.setItem("pychatter.favorites", JSON.stringify(Array.from(state.favorites)));
+}
+
+function loadFavorites() {
+  try {
+    const saved = localStorage.getItem("pychatter.favorites");
+    if (saved) state.favorites = new Set(JSON.parse(saved));
+  } catch {
+    state.favorites = new Set();
+  }
+}
+
+function isFavorite(item) {
+  return state.favorites.has(item);
+}
+
+// FEATURE 3: Unread Messages Counter
+function markAsRead(channel) {
+  state.unreadCount[channel] = 0;
+  updateUnreadBadges();
+}
+
+function incrementUnread(channel) {
+  state.unreadCount[channel] = (state.unreadCount[channel] || 0) + 1;
+  updateUnreadBadges();
+}
+
+function updateUnreadBadges() {
+  const totalUnread = Object.values(state.unreadCount).reduce((a, b) => a + b, 0);
+  const unreadBtn = $("unreadBtn");
+  if (unreadBtn) {
+    unreadBtn.textContent = totalUnread > 0 ? `🔔 ${totalUnread}` : "🔔";
+  }
+}
+
+// FEATURE 4: Message Pinning
+function pinMessage(msgId, channel = state.channel) {
+  if (!state.pinnedMessages.has(channel)) {
+    state.pinnedMessages.set(channel, []);
+  }
+  state.pinnedMessages.get(channel).push(msgId);
+  send({ type: "pin_message", id: msgId, channel });
+  addMessage("System", `Message pinned to #${channel}`, "system");
+}
+
+function unpinMessage(msgId, channel = state.channel) {
+  if (state.pinnedMessages.has(channel)) {
+    const pins = state.pinnedMessages.get(channel);
+    const idx = pins.indexOf(msgId);
+    if (idx !== -1) pins.splice(idx, 1);
+  }
+  send({ type: "unpin_message", id: msgId, channel });
+}
+
+function getPinnedMessages(channel = state.channel) {
+  return state.pinnedMessages.get(channel) || [];
+}
+
+// FEATURE 5: Message Threading/Replies
+function replyToMessage(msgId, text) {
+  if (!state.messageThreads.has(msgId)) {
+    state.messageThreads.set(msgId, []);
+  }
+  state.messageThreads.get(msgId).push({
+    author: state.username,
+    content: text,
+    timestamp: Date.now(),
+  });
+  send({ type: "message_reply", reply_to: msgId, content: text });
+}
+
+function getThreadReplies(msgId) {
+  return state.messageThreads.get(msgId) || [];
+}
+
+// FEATURE 6: Rich Text Formatting
+function formatBold(text) {
+  return `**${text}**`;
+}
+
+function formatItalic(text) {
+  return `*${text}*`;
+}
+
+function formatCode(text) {
+  return `` `${text}` ``;
+}
+
+function formatCodeBlock(text) {
+  return `\`\`\`\n${text}\n\`\`\``;
+}
+
+function formatMessage(text, format = "bold") {
+  switch (format) {
+    case "bold": return formatBold(text);
+    case "italic": return formatItalic(text);
+    case "code": return formatCode(text);
+    case "code-block": return formatCodeBlock(text);
+    default: return text;
+  }
+}
+
+// FEATURE 7: Global User Search
+function searchUsers(query) {
+  const term = query.toLowerCase();
+  return state.users.filter(u => u.toLowerCase().includes(term));
+}
+
+function searchChannels(query) {
+  const term = query.toLowerCase();
+  return state.channels.filter(c => c.toLowerCase().includes(term));
+}
+
+function performGlobalSearch(query) {
+  const users = searchUsers(query);
+  const channels = searchChannels(query);
+  return { users, channels };
+}
+
+// FEATURE 8: @Mentions Tracking
+function trackMention(username) {
+  if (!state.recentMentions.includes(username)) {
+    state.recentMentions.unshift(username);
+    if (state.recentMentions.length > 20) state.recentMentions.pop();
+  }
+  saveMentionHistory();
+}
+
+function saveMentionHistory() {
+  localStorage.setItem("pychatter.mentions", JSON.stringify(state.recentMentions));
+}
+
+function loadMentionHistory() {
+  try {
+    const saved = localStorage.getItem("pychatter.mentions");
+    if (saved) state.recentMentions = JSON.parse(saved);
+  } catch {
+    state.recentMentions = [];
+  }
+}
+
+// FEATURE 9: Channel Search/Filter
+function filterChannelList(search) {
+  const filtered = searchChannels(search);
+  renderList($("channels"), filtered, state.channel, (name) => {
+    send({ type: "switch_channel", channel: name });
+  });
+}
+
+// FEATURE 10: Enhanced Typing Notifications
+function showTypingUsers() {
+  const typing = Object.keys(state.userTypingStatus).filter(u => u !== state.username);
+  if (typing.length === 0) return "";
+  if (typing.length === 1) return `${typing[0]} is typing...`;
+  return `${typing.join(", ")} are typing...`;
 }
 
 // ─── Notification System ─────────────────────────────────────────────────────
@@ -1395,10 +1697,24 @@ connectSocket = function() {
 };
 
 // ─── Initialize ──────────────────────────────────────────────────────────────
+// Load all persisted data
 loadBookmarks();
 loadBlockedUsers();
+loadFavorites();
+loadMentionHistory();
 requestNotificationPermission();
 
+// Load user preferences
+try {
+  const savedStatus = localStorage.getItem("pychatter.status");
+  if (savedStatus) state.userStatus = savedStatus;
+  const savedCustomStatus = localStorage.getItem("pychatter.customStatus");
+  if (savedCustomStatus) state.customStatus = savedCustomStatus;
+} catch {
+  // Use defaults
+}
+
+updateStatusBadge();
 connectSocket();
 loadRtcConfig();
 syncActionButtons();
