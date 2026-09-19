@@ -1134,8 +1134,8 @@ $("blockUserBtn").addEventListener("click", () => {
     alert("Select a user first");
     return;
   }
-  blockUser(target);
-  send({ type: "block_user", user: target.toLowerCase() });
+  blockUserWithServer(target);
+  showNotification("User Blocked", { body: `${target} is now blocked` });
 });
 
 $("unblockUserBtn").addEventListener("click", () => {
@@ -1318,21 +1318,22 @@ showRegisterBtn.addEventListener("click", () => setAuthMode("register"));
 
 // ─── 10 New Functional Features ──────────────────────────────────────────────
 
-// FEATURE 1: User Presence & Status System
+// FEATURE 1: User Presence & Status System (Server-synced)
 function setUserStatus(newStatus) {
   const validStatuses = ["online", "away", "dnd", "offline"];
   if (validStatuses.includes(newStatus)) {
     state.userStatus = newStatus;
     updateStatusBadge();
-    send({ type: "set_status", status: newStatus });
     localStorage.setItem("pychatter.status", newStatus);
+    send({ type: "set_status", status: newStatus });
+    addMessage("System", `Status changed to ${newStatus}`, "system");
   }
 }
 
 function setCustomStatus(message) {
   state.customStatus = message;
-  send({ type: "set_custom_status", message });
   localStorage.setItem("pychatter.customStatus", message);
+  send({ type: "set_custom_status", message });
 }
 
 function updateStatusBadge() {
@@ -1343,7 +1344,7 @@ function updateStatusBadge() {
   }
 }
 
-// FEATURE 2: Favorite Channels/Users
+// FEATURE 2: Favorite Channels/Users (Client-side localStorage)
 function toggleFavorite(item) {
   if (state.favorites.has(item)) {
     state.favorites.delete(item);
@@ -1371,6 +1372,28 @@ function isFavorite(item) {
   return state.favorites.has(item);
 }
 
+// FEATURE: Block User (Server-synced)
+function blockUserWithServer(username) {
+  const normalized = username.toLowerCase();
+  if (!state.blockedUsers.includes(normalized)) {
+    state.blockedUsers.push(normalized);
+  }
+  saveBlockedUsers();
+  send({ type: "block_user", user: normalized });
+  addMessage("System", `${username} has been blocked`, "system");
+}
+
+function unblockUserWithServer(username) {
+  const normalized = username.toLowerCase();
+  const idx = state.blockedUsers.indexOf(normalized);
+  if (idx !== -1) {
+    state.blockedUsers.splice(idx, 1);
+  }
+  saveBlockedUsers();
+  send({ type: "unblock_user", user: normalized });
+  addMessage("System", `${username} has been unblocked`, "system");
+}
+
 // FEATURE 3: Unread Messages Counter
 function markAsRead(channel) {
   state.unreadCount[channel] = 0;
@@ -1390,30 +1413,56 @@ function updateUnreadBadges() {
   }
 }
 
-// FEATURE 4: Message Pinning
+// FEATURE 4: Message Pinning (Server-synced)
 function pinMessage(msgId, channel = state.channel) {
   if (!state.pinnedMessages.has(channel)) {
     state.pinnedMessages.set(channel, []);
   }
-  state.pinnedMessages.get(channel).push(msgId);
-  send({ type: "pin_message", id: msgId, channel });
-  addMessage("System", `Message pinned to #${channel}`, "system");
+  const pins = state.pinnedMessages.get(channel);
+  if (!pins.includes(msgId)) {
+    pins.push(msgId);
+    savePinnedMessages();
+    send({ type: "pin_message", id: msgId, channel });
+  }
 }
 
 function unpinMessage(msgId, channel = state.channel) {
   if (state.pinnedMessages.has(channel)) {
     const pins = state.pinnedMessages.get(channel);
     const idx = pins.indexOf(msgId);
-    if (idx !== -1) pins.splice(idx, 1);
+    if (idx !== -1) {
+      pins.splice(idx, 1);
+      savePinnedMessages();
+      send({ type: "unpin_message", id: msgId, channel });
+    }
   }
-  send({ type: "unpin_message", id: msgId, channel });
 }
 
 function getPinnedMessages(channel = state.channel) {
   return state.pinnedMessages.get(channel) || [];
 }
 
-// FEATURE 5: Message Threading/Replies
+function savePinnedMessages() {
+  const data = {};
+  for (const [ch, msgs] of state.pinnedMessages) {
+    data[ch] = msgs;
+  }
+  localStorage.setItem("pychatter.pinned", JSON.stringify(data));
+}
+
+function loadPinnedMessages() {
+  try {
+    const saved = localStorage.getItem("pychatter.pinned");
+    if (saved) {
+      const data = JSON.parse(saved);
+      state.pinnedMessages = new Map(Object.entries(data));
+    }
+  } catch {
+    state.pinnedMessages = new Map();
+  }
+}
+
+// FEATURE 5: Message Threading/Replies (Client-side local threads)
 function replyToMessage(msgId, text) {
   if (!state.messageThreads.has(msgId)) {
     state.messageThreads.set(msgId, []);
@@ -1423,11 +1472,32 @@ function replyToMessage(msgId, text) {
     content: text,
     timestamp: Date.now(),
   });
-  send({ type: "message_reply", reply_to: msgId, content: text });
+  saveMessageThreads();
+  addMessage("System", `Reply added to message thread`, "system");
 }
 
 function getThreadReplies(msgId) {
   return state.messageThreads.get(msgId) || [];
+}
+
+function saveMessageThreads() {
+  const data = {};
+  for (const [msgId, threads] of state.messageThreads) {
+    data[msgId] = threads;
+  }
+  localStorage.setItem("pychatter.threads", JSON.stringify(data));
+}
+
+function loadMessageThreads() {
+  try {
+    const saved = localStorage.getItem("pychatter.threads");
+    if (saved) {
+      const data = JSON.parse(saved);
+      state.messageThreads = new Map(Object.entries(data));
+    }
+  } catch {
+    state.messageThreads = new Map();
+  }
 }
 
 // FEATURE 6: Rich Text Formatting
@@ -1702,6 +1772,8 @@ loadBookmarks();
 loadBlockedUsers();
 loadFavorites();
 loadMentionHistory();
+loadPinnedMessages();
+loadMessageThreads();
 requestNotificationPermission();
 
 // Load user preferences

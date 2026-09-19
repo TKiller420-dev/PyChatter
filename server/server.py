@@ -30,6 +30,12 @@ class ChatServer:
             self.store.ensure_voice_room("lobby", "system")
             self.voice_rooms["lobby"] = set()
 
+        # New feature tracking
+        self.user_statuses: Dict[str, str] = {}  # username -> status (online/away/dnd/offline)
+        self.user_custom_status: Dict[str, str] = {}  # username -> custom message
+        self.blocked_users: Dict[str, Set[str]] = defaultdict(set)  # username -> blocked_users
+        self.pinned_messages: Dict[str, list] = defaultdict(list)  # channel -> [msg_ids]
+
     async def send(self, writer: asyncio.StreamWriter, packet: dict) -> None:
         writer.write(encode_packet(packet))
         await writer.drain()
@@ -631,6 +637,84 @@ class ChatServer:
                         "id": msg_id,
                         "reactions": reactions,
                     })
+
+                elif kind == "set_status":
+                    if writer not in self.clients:
+                        continue
+                    username = self.clients[writer]["username"]
+                    status = str(packet.get("status", "online")).strip().lower()
+                    if status not in {"online", "away", "dnd", "offline"}:
+                        status = "online"
+                    self.user_statuses[username] = status
+                    self.clients[writer]["status"] = status
+                    await self.broadcast_social_state()
+
+                elif kind == "set_custom_status":
+                    if writer not in self.clients:
+                        continue
+                    username = self.clients[writer]["username"]
+                    message = str(packet.get("message", "")).strip()[:100]
+                    self.user_custom_status[username] = message
+                    await self.send(writer, {
+                        "type": "system",
+                        "message": f"Custom status updated: {message or '(cleared)'}"
+                    })
+
+                elif kind == "block_user":
+                    if writer not in self.clients:
+                        continue
+                    username = self.clients[writer]["username"]
+                    target = str(packet.get("user", "")).strip().lower()[:24]
+                    if target and target != username:
+                        self.blocked_users[username].add(target)
+                        await self.send(writer, {
+                            "type": "system",
+                            "message": f"Blocked {target}"
+                        })
+
+                elif kind == "unblock_user":
+                    if writer not in self.clients:
+                        continue
+                    username = self.clients[writer]["username"]
+                    target = str(packet.get("user", "")).strip().lower()[:24]
+                    if target in self.blocked_users[username]:
+                        self.blocked_users[username].remove(target)
+                        await self.send(writer, {
+                            "type": "system",
+                            "message": f"Unblocked {target}"
+                        })
+
+                elif kind == "pin_message":
+                    if writer not in self.clients:
+                        continue
+                    channel = self.client_channels.get(writer, "general")
+                    try:
+                        msg_id = int(packet.get("id", 0))
+                    except (TypeError, ValueError):
+                        continue
+                    if msg_id and msg_id not in self.pinned_messages[channel]:
+                        self.pinned_messages[channel].append(msg_id)
+                        await self.broadcast(channel, {
+                            "type": "system",
+                            "message": f"Message {msg_id} was pinned",
+                            "channel": channel,
+                        })
+
+                elif kind == "unpin_message":
+                    if writer not in self.clients:
+                        continue
+                    channel = self.client_channels.get(writer, "general")
+                    try:
+                        msg_id = int(packet.get("id", 0))
+                    except (TypeError, ValueError):
+                        continue
+                    if msg_id in self.pinned_messages[channel]:
+                        self.pinned_messages[channel].remove(msg_id)
+                        await self.broadcast(channel, {
+                            "type": "system",
+                            "message": f"Message {msg_id} was unpinned",
+                            "channel": channel,
+                        })
 
                 elif kind == "typing":
                     if writer not in self.clients:
