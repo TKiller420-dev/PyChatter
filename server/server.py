@@ -1,5 +1,6 @@
 import asyncio
 import os
+import re
 import sys
 import time
 from collections import defaultdict
@@ -35,6 +36,24 @@ class ChatServer:
         self.user_custom_status: Dict[str, str] = {}  # username -> custom message
         self.blocked_users: Dict[str, Set[str]] = defaultdict(set)  # username -> blocked_users
         self.pinned_messages: Dict[str, list] = defaultdict(list)  # channel -> [msg_ids]
+        self.timeouts: Dict[str, float] = {}  # username -> unix ts when timeout expires
+        self.polls: Dict[str, dict] = {}  # channel -> active poll {id, question, options, votes, created_by}
+
+    def _poll_packet(self, channel: str) -> dict:
+        poll = self.polls.get(channel)
+        if not poll:
+            return {"type": "poll_update", "channel": channel, "poll": None}
+        return {
+            "type": "poll_update",
+            "channel": channel,
+            "poll": {
+                "id": poll["id"],
+                "question": poll["question"],
+                "options": poll["options"],
+                "counts": [len(poll["votes"][i]) for i in range(len(poll["options"]))],
+                "created_by": poll["created_by"],
+            },
+        }
 
     async def send(self, writer: asyncio.StreamWriter, packet: dict) -> None:
         writer.write(encode_packet(packet))
@@ -162,6 +181,8 @@ class ChatServer:
                 "channels": sorted(self.channels.keys()),
                 "channel": channel,
                 "history": history,
+                "pinned": self.pinned_messages.get(channel, []),
+                "poll": self._poll_packet(channel)["poll"],
             },
         )
 
@@ -303,6 +324,15 @@ class ChatServer:
                     if not content:
                         continue
 
+                    timeout_until = self.timeouts.get(username, 0)
+                    if timeout_until > time.time():
+                        remaining = int(timeout_until - time.time())
+                        await self.send(writer, {
+                            "type": "action_error",
+                            "message": f"You are timed out for {remaining}s and cannot send messages.",
+                        })
+                        continue
+
                     msg_id = fast_hash(f"{username}:{time.time_ns()}:{content}")
                     created_at = int(time.time())
                     self.store.save_channel_message(msg_id, channel, username, content)
@@ -319,6 +349,115 @@ class ChatServer:
                     }
                     self.store.log_event("channel_message", actor=username, channel=channel, metadata={"id": msg_id})
                     await self.broadcast(channel, packet_out)
+
+                    mentioned = set(re.findall(r"@([a-z0-9_-]{1,24})", content.lower()))
+                    mentioned.discard(username)
+                    for target in mentioned:
+                        target_writer = self.online_users.get(target)
+                        if target_writer and target_writer in self.clients:
+                            await self.send(target_writer, {
+                                "type": "mention",
+                                "id": msg_id,
+                                "by": username,
+                                "channel": channel,
+                                "content": content,
+                            })
+
+                elif kind == "search_messages":
+                    if writer not in self.clients:
+                        continue
+                    channel = str(packet.get("channel", "")).strip().lower() or self.client_channels.get(writer, "general")
+                    query = str(packet.get("query", "")).strip()
+                    if not query:
+                        continue
+                    results = self.store.search_channel_messages(channel, query, limit=30)
+                    await self.send(writer, {
+                        "type": "search_results",
+                        "channel": channel,
+                        "query": query,
+                        "results": results,
+                    })
+
+                elif kind == "poll_create":
+                    if writer not in self.clients:
+                        continue
+                    username = self.clients[writer]["username"]
+                    channel = self.client_channels.get(writer, "general")
+                    question = str(packet.get("question", "")).strip()[:200]
+                    options = [str(o).strip()[:80] for o in packet.get("options", []) if str(o).strip()][:6]
+                    if not question or len(options) < 2:
+                        await self.send(writer, {"type": "action_error", "message": "A poll needs a question and at least 2 options."})
+                        continue
+                    poll_id = fast_hash(f"poll:{username}:{time.time_ns()}:{question}")
+                    self.polls[channel] = {
+                        "id": poll_id,
+                        "question": question,
+                        "options": options,
+                        "votes": {i: set() for i in range(len(options))},
+                        "created_by": username,
+                    }
+                    self.store.log_event("poll_created", actor=username, channel=channel, metadata={"id": poll_id})
+                    await self.broadcast(channel, self._poll_packet(channel))
+
+                elif kind == "poll_vote":
+                    if writer not in self.clients:
+                        continue
+                    username = self.clients[writer]["username"]
+                    channel = self.client_channels.get(writer, "general")
+                    poll = self.polls.get(channel)
+                    try:
+                        option_idx = int(packet.get("option", -1))
+                    except (TypeError, ValueError):
+                        continue
+                    if not poll or poll["id"] != packet.get("poll_id") or option_idx not in poll["votes"]:
+                        continue
+                    for voters in poll["votes"].values():
+                        voters.discard(username)
+                    poll["votes"][option_idx].add(username)
+                    await self.broadcast(channel, self._poll_packet(channel))
+
+                elif kind == "moderate_kick":
+                    if writer not in self.clients:
+                        continue
+                    actor_role = self.clients[writer]["role"]
+                    if actor_role not in {"admin", "mod"}:
+                        await self.send(writer, {"type": "action_error", "message": "Only mods and admins can kick users."})
+                        continue
+                    target = str(packet.get("username", "")).strip().lower()[:24]
+                    target_writer = self.online_users.get(target)
+                    if not target_writer or target_writer not in self.clients:
+                        await self.send(writer, {"type": "action_error", "message": "User is not online."})
+                        continue
+                    actor = self.clients[writer]["username"]
+                    channel = self.client_channels.get(target_writer, "general")
+                    await self.send(target_writer, {"type": "system", "message": f"You were kicked by {actor}."})
+                    self.store.log_event("user_kicked", actor=actor, target=target, channel=channel)
+                    self.disconnect(target_writer)
+
+                elif kind == "moderate_timeout":
+                    if writer not in self.clients:
+                        continue
+                    actor_role = self.clients[writer]["role"]
+                    if actor_role not in {"admin", "mod"}:
+                        await self.send(writer, {"type": "action_error", "message": "Only mods and admins can time out users."})
+                        continue
+                    target = str(packet.get("username", "")).strip().lower()[:24]
+                    try:
+                        seconds = max(0, min(3600, int(packet.get("seconds", 60))))
+                    except (TypeError, ValueError):
+                        seconds = 60
+                    if not target:
+                        continue
+                    actor = self.clients[writer]["username"]
+                    self.timeouts[target] = time.time() + seconds
+                    self.store.log_event("user_timeout", actor=actor, target=target, metadata={"seconds": seconds})
+                    target_writer = self.online_users.get(target)
+                    if target_writer and target_writer in self.clients:
+                        await self.send(target_writer, {
+                            "type": "system",
+                            "message": f"You were timed out for {seconds}s by {actor}.",
+                        })
+                    await self.send(writer, {"type": "system", "message": f"{target} timed out for {seconds}s."})
 
                 elif kind == "dm":
                     if writer not in self.clients:
@@ -687,6 +826,11 @@ class ChatServer:
                 elif kind == "pin_message":
                     if writer not in self.clients:
                         continue
+                    username = self.clients[writer]["username"]
+                    role = self.clients[writer]["role"]
+                    if role not in {"admin", "mod"}:
+                        await self.send(writer, {"type": "action_error", "message": "Only mods and admins can pin messages."})
+                        continue
                     channel = self.client_channels.get(writer, "general")
                     try:
                         msg_id = int(packet.get("id", 0))
@@ -694,14 +838,20 @@ class ChatServer:
                         continue
                     if msg_id and msg_id not in self.pinned_messages[channel]:
                         self.pinned_messages[channel].append(msg_id)
+                        self.store.log_event("message_pinned", actor=username, channel=channel, metadata={"id": msg_id})
                         await self.broadcast(channel, {
-                            "type": "system",
-                            "message": f"Message {msg_id} was pinned",
+                            "type": "pinned_update",
                             "channel": channel,
+                            "pinned": self.pinned_messages[channel],
                         })
 
                 elif kind == "unpin_message":
                     if writer not in self.clients:
+                        continue
+                    username = self.clients[writer]["username"]
+                    role = self.clients[writer]["role"]
+                    if role not in {"admin", "mod"}:
+                        await self.send(writer, {"type": "action_error", "message": "Only mods and admins can unpin messages."})
                         continue
                     channel = self.client_channels.get(writer, "general")
                     try:
@@ -710,10 +860,11 @@ class ChatServer:
                         continue
                     if msg_id in self.pinned_messages[channel]:
                         self.pinned_messages[channel].remove(msg_id)
+                        self.store.log_event("message_unpinned", actor=username, channel=channel, metadata={"id": msg_id})
                         await self.broadcast(channel, {
-                            "type": "system",
-                            "message": f"Message {msg_id} was unpinned",
+                            "type": "pinned_update",
                             "channel": channel,
+                            "pinned": self.pinned_messages[channel],
                         })
 
                 elif kind == "typing":

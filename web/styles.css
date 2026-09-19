@@ -274,27 +274,28 @@ body {
 
 .quick-actions {
   display: flex;
-  gap: 4px;
-  padding: 8px 10px;
+  gap: 2px;
+  padding: 6px 8px;
   border-bottom: 1px solid #25282c;
   flex-shrink: 0;
 }
 
 .quick-action-btn {
   flex: 1;
-  padding: 6px;
-  border: 1px solid #3a3f47;
-  background: #2f3136;
-  color: var(--text);
-  border-radius: 4px;
+  padding: 7px 0;
+  border: none;
+  background: transparent;
+  color: #b9bbbe;
+  border-radius: 6px;
   cursor: pointer;
-  font-size: 14px;
-  transition: all 0.2s;
+  font-size: 15px;
+  line-height: 1;
+  transition: background 0.12s ease, color 0.12s ease;
 }
 
 .quick-action-btn:hover {
-  background: #3a3f47;
-  border-color: var(--brand);
+  background: rgba(79, 84, 92, 0.32);
+  color: #ffffff;
 }
 
 .pane-section {
@@ -451,6 +452,14 @@ body {
   justify-content: flex-end;
 }
 
+.modal-footer:empty {
+  display: none;
+}
+
+.modal-body:has(.menu-list) {
+  padding: 8px;
+}
+
 .form-group {
   margin-bottom: 16px;
 }
@@ -497,16 +506,15 @@ body {
 }
 
 .btn-modal {
-  flex: 1;
-  padding: 10px 16px;
+  padding: 8px 18px;
   border: none;
-  border-radius: 6px;
-  font-weight: 600;
+  border-radius: 4px;
+  font-weight: 500;
   font-size: 14px;
   cursor: pointer;
-  transition: all 0.2s;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
+  transition: background 0.12s ease, color 0.12s ease;
+  background: none;
+  color: var(--text);
 }
 
 .btn-modal.primary {
@@ -515,29 +523,144 @@ body {
 }
 
 .btn-modal.primary:hover {
-  background: #5255e5;
-  transform: translateY(-1px);
+  background: #4752c4;
 }
 
 .btn-modal.secondary {
-  background: var(--tertiary);
-  color: var(--text);
-  border: 1px solid #3a3f47;
+  background: transparent;
+  color: #dcddde;
 }
 
 .btn-modal.secondary:hover {
-  background: #3a3f47;
-  border-color: var(--brand);
+  text-decoration: underline;
 }
 
 .btn-modal.danger {
-  background: rgba(237, 66, 69, 0.1);
-  color: #ef4747;
-  border: 1px solid #ef4747;
+  background: var(--danger);
+  color: white;
 }
 
 .btn-modal.danger:hover {
-  background: rgba(237, 66, 69, 0.2);
+  background: #c53537;
+}
+
+/* Discord-style dropdown menu (quick menu, member context menu) */
+.menu-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.menu-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 10px;
+  border: none;
+  background: transparent;
+  color: #dcddde;
+  font-size: 14px;
+  font-weight: 500;
+  text-align: left;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.1s ease, color 0.1s ease;
+}
+
+.menu-row:hover {
+  background: var(--brand);
+  color: #ffffff;
+}
+
+.menu-row.danger {
+  color: #ed4245;
+}
+
+.menu-row.danger:hover {
+  background: #ed4245;
+  color: #ffffff;
+}
+
+.menu-row-icon {
+  width: 18px;
+  text-align: center;
+  font-size: 15px;
+  flex-shrink: 0;
+}
+
+.menu-divider {
+  height: 1px;
+  background: #25282c;
+  margin: 6px 2px;
+}
+
+/* Member row context menu trigger */
+.member-context-btn {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: transparent;
+  color: #8e9297;
+  font-size: 14px;
+  line-height: 1;
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.1s ease, background 0.1s ease, color 0.1s ease;
+}
+
+.member-row:hover .member-context-btn {
+  opacity: 1;
+}
+
+.member-context-btn:hover {
+  background: rgba(0, 0, 0, 0.2);
+  color: #ffffff;
+}
+
+/* Call controls */
+.call-controls {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  padding: 14px 0 4px;
+}
+
+.call-control-btn {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: none;
+  background: #40444b;
+  color: #dcddde;
+  font-size: 18px;
+  cursor: pointer;
+  transition: background 0.12s ease, transform 0.1s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.call-control-btn:hover {
+  background: #4a4f57;
+  transform: translateY(-1px);
+}
+
+.call-control-btn.danger {
+  background: var(--danger);
+  color: white;
+}
+
+.call-control-btn.danger:hover {
+  background: #c53537;
+}
+
+.call-control-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  transform: none;
 }
 
 .toast-container {
@@ -1102,6 +1225,102 @@ body {
   gap: 2px;
 }
 
+.message-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.02);
+  border-bottom: 1px solid var(--line);
+}
+
+.message-search-input {
+  flex: 1;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.message-search-input:focus {
+  outline: none;
+  border-color: var(--brand-2);
+}
+
+.poll-container.hidden {
+  display: none;
+}
+
+.poll-card {
+  margin: 10px 16px 0;
+  padding: 14px 16px;
+  background: var(--secondary);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.poll-question {
+  font-weight: 700;
+  color: var(--title);
+  margin-bottom: 10px;
+}
+
+.poll-options {
+  display: grid;
+  gap: 6px;
+}
+
+.poll-option {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid #3a3f47;
+  border-radius: 6px;
+  background: var(--tertiary);
+  color: var(--text);
+  cursor: pointer;
+  overflow: hidden;
+  text-align: left;
+  font-size: 13px;
+}
+
+.poll-option:hover {
+  border-color: var(--brand);
+}
+
+.poll-option-bar {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: rgba(88, 101, 242, 0.18);
+  transition: width 0.25s ease;
+  z-index: 0;
+}
+
+.poll-option-label,
+.poll-option-count {
+  position: relative;
+  z-index: 1;
+}
+
+.poll-option-count {
+  color: var(--senary);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.poll-meta {
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--senary);
+}
+
 .call-panel {
   border-top: 1px solid #24272c;
   padding: 10px 12px;
@@ -1410,9 +1629,13 @@ body {
   gap: 8px;
 }
 
-.action-grid {
-  display: grid;
-  gap: 8px;
+.friend-action-row {
+  display: flex;
+  gap: 2px;
+  margin-top: 6px;
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 6px;
+  padding: 2px;
 }
 
 .sr-only {

@@ -494,6 +494,7 @@ function buildMemberRow(name, role, isActive, onSelect) {
   const initial = escapeHtml((name || "?").slice(0, 1).toUpperCase());
   const avatarStyle = profile.avatar_url ? ` style="background-image:url('${escapeHtml(profile.avatar_url)}')"` : "";
   const nameStyle = profile.name_color ? ` style="color:${escapeHtml(profile.name_color)}"` : "";
+  const isSelf = name === state.username;
 
   const li = document.createElement("li");
   li.className = "member-row" + (isActive ? " active" : "");
@@ -504,10 +505,67 @@ function buildMemberRow(name, role, isActive, onSelect) {
     </span>
     <span class="member-name"${nameStyle}>${escapeHtml(name)}</span>
     ${role !== "member" ? `<span class="member-role-badge role-${role}">${role}</span>` : ""}
+    ${isSelf ? "" : `<button class="member-context-btn" title="More" type="button">⋯</button>`}
   `;
   li.addEventListener("click", () => onSelect(name));
+
+  const ctxBtn = li.querySelector(".member-context-btn");
+  if (ctxBtn) {
+    ctxBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openMemberContextMenu(name);
+    });
+  }
   return li;
 }
+
+function openMemberContextMenu(name) {
+  const isBlocked = isUserBlocked(name);
+  const isMod = state.role === "admin" || state.role === "mod";
+  const content = `<div class="menu-list">
+    ${menuRow("💬", "Message", `closeModal(); openDmComposer('${name}')`)}
+    ${menuRow("📜", "DM History", `closeModal(); openDmHistory('${name}')`)}
+    ${state.role === "admin" ? menuRow("👑", "Set Role", `closeModal(); openRoleSelector('${name}')`) : ""}
+    <div class="menu-divider"></div>
+    ${isBlocked
+      ? menuRow("✅", "Unblock User", `closeModal(); unblockSelectedUser('${name}')`)
+      : menuRow("🚫", "Block User", `closeModal(); blockSelectedUser('${name}')`, true)}
+    ${isMod ? `<div class="menu-divider"></div>` : ""}
+    ${isMod ? menuRow("⏱️", "Timeout User", `closeModal(); openTimeoutModal('${name}')`, true) : ""}
+    ${isMod ? menuRow("👢", "Kick User", `closeModal(); kickUser('${name}')`, true) : ""}
+  </div>`;
+  showModal(name, content, []);
+}
+
+// FEATURE 13/14: Moderation — kick & timeout
+window.kickUser = function(name) {
+  showConfirmModal("Kick User", `Kick ${name} from the server? They can rejoin by reconnecting.`, `confirmKick('${name}')`);
+};
+
+window.confirmKick = function(name) {
+  closeModal();
+  send({ type: "moderate_kick", username: name.toLowerCase() });
+  showSuccess(`Kicked ${name}`);
+};
+
+window.openTimeoutModal = function(name) {
+  const durations = [
+    { label: "1 minute", seconds: 60 },
+    { label: "5 minutes", seconds: 300 },
+    { label: "15 minutes", seconds: 900 },
+    { label: "1 hour", seconds: 3600 },
+  ];
+  const content = `<div class="menu-list">${durations.map(d =>
+    menuRow("⏱️", d.label, `applyTimeout('${name}', ${d.seconds})`)
+  ).join("")}</div>`;
+  showModal(`Timeout ${name}`, content, []);
+};
+
+window.applyTimeout = function(name, seconds) {
+  closeModal();
+  send({ type: "moderate_timeout", username: name.toLowerCase(), seconds });
+  showSuccess(`${name} timed out`);
+};
 
 function renderList(container, items, activeValue, onClick) {
   container.innerHTML = "";
@@ -591,17 +649,20 @@ function renderVoiceRooms() {
   }
 }
 
+function setDisabled(id, value) {
+  const el = $(id);
+  if (el) el.disabled = value;
+}
+
 function syncActionButtons() {
   const hasTarget = !!selectedTarget();
   const inCall = !!state.rtc.pc;
   const micCamReady = !!state.rtc.localStream;
-  $("dmBtn").disabled = !state.isAuthed || !hasTarget;
-  $("voiceCallBtn").disabled = !state.isAuthed || !hasTarget;
-  $("videoCallBtn").disabled = !state.isAuthed || !hasTarget;
-  $("dmHistoryBtn").disabled = !state.isAuthed || !hasTarget;
-  $("hangupBtn").disabled = !state.isAuthed || !inCall;
-  $("toggleMicBtn").disabled = !state.isAuthed || !micCamReady;
-  $("toggleCamBtn").disabled = !state.isAuthed || !micCamReady;
+  setDisabled("voiceCallBtn", !state.isAuthed || !hasTarget);
+  setDisabled("videoCallBtn", !state.isAuthed || !hasTarget);
+  setDisabled("hangupBtn", !state.isAuthed || !inCall);
+  setDisabled("toggleMicBtn", !state.isAuthed || !micCamReady);
+  setDisabled("toggleCamBtn", !state.isAuthed || !micCamReady);
 }
 
 // ─── HTML helpers ─────────────────────────────────────────────────────────────
@@ -667,6 +728,35 @@ function buildMsgToolbar(msgId, author) {
   reactBtn.title = "React";
   reactBtn.addEventListener("click", (e) => { e.stopPropagation(); toggleEmojiPicker(msgId, reactBtn); });
   bar.appendChild(reactBtn);
+
+  const bookmarkBtn = document.createElement("button");
+  bookmarkBtn.textContent = state.bookmarkedMessages.has(String(msgId)) ? "🔖" : "📑";
+  bookmarkBtn.title = "Bookmark message";
+  bookmarkBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    bookmarkLatestMessage(msgId);
+    bookmarkBtn.textContent = state.bookmarkedMessages.has(String(msgId)) ? "🔖" : "📑";
+  });
+  bar.appendChild(bookmarkBtn);
+
+  if (state.role === "admin" || state.role === "mod") {
+    const pinBtn = document.createElement("button");
+    const isPinned = getPinnedMessages().includes(msgId);
+    pinBtn.textContent = isPinned ? "📌" : "📍";
+    pinBtn.title = isPinned ? "Unpin message" : "Pin message";
+    pinBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (getPinnedMessages().includes(msgId)) {
+        unpinMessage(msgId);
+        showInfo("Message unpinned");
+      } else {
+        pinMessage(msgId);
+        showSuccess("Message pinned");
+      }
+      pinBtn.textContent = getPinnedMessages().includes(msgId) ? "📌" : "📍";
+    });
+    bar.appendChild(pinBtn);
+  }
 
   if (author === state.username) {
     const editBtn = document.createElement("button");
@@ -904,6 +994,24 @@ function handlePacket(packet) {
         send({ type: "switch_channel", channel: name });
       });
       renderHistory(packet.history || []);
+      state.pinnedMessages.set(state.channel, packet.pinned || []);
+      updatePinnedButton();
+      renderPoll(state.channel, packet.poll || null);
+      break;
+    case "pinned_update":
+      state.pinnedMessages.set(packet.channel, packet.pinned || []);
+      if (packet.channel === state.channel) updatePinnedButton();
+      break;
+    case "search_results":
+      handleSearchResults(packet);
+      break;
+    case "mention":
+      trackMention(packet.by);
+      showToast(`${packet.by} mentioned you in #${packet.channel}`, "info");
+      showNotification(`${packet.by} mentioned you`, { body: packet.content || "" });
+      break;
+    case "poll_update":
+      renderPoll(packet.channel, packet.poll);
       break;
     case "user_list":
       state.users = packet.users || [];
@@ -1119,14 +1227,16 @@ $("leaveVoiceRoomBtn").addEventListener("click", () => {
   send({ type: "voice_leave" });
 });
 
-$("dmBtn").addEventListener("click", () => {
-  const targetName = selectedTarget();
+window.openDmComposer = function(targetName) {
+  targetName = targetName || selectedTarget();
   if (!targetName) {
     showError("Select a user first");
     return;
   }
+  state.selectedUser = targetName;
+  state.selectedFriend = state.friends.includes(targetName) ? targetName : state.selectedFriend;
   showPromptModal(`💬 Message ${targetName}`, "Type your message:", "handleSendDM");
-});
+};
 
 window.handleSendDM = function(text) {
   const targetName = selectedTarget();
@@ -1134,10 +1244,10 @@ window.handleSendDM = function(text) {
   showSuccess(`Message sent to ${targetName}`);
 };
 
-$("changeNameBtn").addEventListener("click", () => {
+window.openChangeUsername = function() {
   if (!state.isAuthed) return;
   showPromptModal("✏️ Change Username", "Enter new username:", "handleChangeUsername");
-});
+};
 
 window.handleChangeUsername = function(nextName) {
   const normalized = nextName.trim().toLowerCase();
@@ -1149,33 +1259,35 @@ window.handleChangeUsername = function(nextName) {
   showSuccess(`Changing username to ${nextName}`);
 };
 
-$("dmHistoryBtn").addEventListener("click", () => {
-  const targetName = selectedTarget();
+window.openDmHistory = function(targetName) {
+  targetName = targetName || selectedTarget();
   if (!targetName) {
     showError("Select a user first");
     return;
   }
+  state.selectedUser = targetName;
   send({ type: "dm_history", with: targetName.toLowerCase() });
-});
+};
 
-$("promoteBtn").addEventListener("click", () => {
+window.openRoleSelector = function(targetName) {
+  targetName = targetName || state.selectedUser;
   if (state.role !== "admin") {
     showError("Only admins can set roles");
     return;
   }
-  if (!state.selectedUser) {
+  if (!targetName) {
     showError("Select a user first");
     return;
   }
-  const target = state.selectedUser;
-  const content = `<p style="color: var(--text); margin-bottom: 16px;">Select a role for <strong>${target}</strong>:</p>`;
+  state.selectedUser = targetName;
+  const content = `<p style="color: var(--text); margin-bottom: 4px;">Select a role for <strong>${escapeHtml(targetName)}</strong>:</p>`;
   const buttons = [
     { label: "Member", type: "secondary", onclick: `applyRole('member')` },
     { label: "Moderator", type: "secondary", onclick: `applyRole('mod')` },
     { label: "Admin", type: "danger", onclick: `applyRole('admin')` },
   ];
-  showModal("👑 Set Role", content, buttons);
-});
+  showModal("Set Role", content, buttons);
+};
 
 window.applyRole = function(normalized) {
   closeModal();
@@ -1232,21 +1344,24 @@ $("toggleCamBtn").addEventListener("click", () => {
   syncActionButtons();
 });
 
-$("blockUserBtn").addEventListener("click", () => {
+window.blockSelectedUser = function(targetName) {
   if (!state.isAuthed) return;
-  const target = selectedTarget();
+  const target = targetName || selectedTarget();
   if (!target) {
     showError("Select a user first");
     return;
   }
   blockUserWithServer(target);
-  showNotification("User Blocked", { body: `${target} is now blocked` });
-});
+};
 
-$("unblockUserBtn").addEventListener("click", () => {
+window.unblockSelectedUser = function(targetName) {
   if (!state.isAuthed) return;
+  if (targetName) {
+    unblockUserWithServer(targetName);
+    return;
+  }
   showPromptModal("✅ Unblock User", "Enter username to unblock:", "handleUnblockUser");
-});
+};
 
 window.handleUnblockUser = function(username) {
   unblockUserWithServer(username);
@@ -1309,17 +1424,25 @@ $("unreadBtn").addEventListener("click", () => {
   ]);
 });
 
+function menuRow(icon, label, onclick, danger = false) {
+  return `<button class="menu-row${danger ? " danger" : ""}" onclick="${onclick}"><span class="menu-row-icon">${icon}</span><span>${label}</span></button>`;
+}
+
 $("quickMenuBtn").addEventListener("click", () => {
   const content = `
-    <div style="color: var(--text); display: grid; gap: 12px;">
-      <button class="btn-modal primary" style="width: 100%;" onclick="showPromptModal('Set Custom Status', 'Enter your status message', 'setCustomStatusFromModal')">Set Status Message</button>
-      <button class="btn-modal primary" style="width: 100%;" onclick="showAccountInfo()">View Account Info</button>
-      <button class="btn-modal primary" style="width: 100%;" onclick="showStatusSelector()">Change Status</button>
+    <div class="menu-list">
+      ${menuRow("🟢", "Change Status", "showStatusSelector()")}
+      ${menuRow("💬", "Set Status Message", "showPromptModal('Set Custom Status', 'Enter your status message', 'setCustomStatusFromModal')")}
+      ${menuRow("✏️", "Change Username", "openChangeUsername()")}
+      ${menuRow("🖼️", "Set Avatar", "openSetAvatar()")}
+      ${menuRow("🎨", "Set Name Color", "openSetNameColor()")}
+      ${menuRow("🔖", "View Bookmarks", "openBookmarksList()")}
+      ${menuRow("👤", "Account Info", "showAccountInfo()")}
+      <div class="menu-divider"></div>
+      ${menuRow("🚪", "Log Out", "doLogout()", true)}
     </div>
   `;
-  showModal("⚙️ Quick Menu", content, [
-    { label: "Close", type: "secondary", onclick: "closeModal()" }
-  ]);
+  showModal("Account", content, []);
 });
 
 window.setCustomStatusFromModal = function(msg) {
@@ -1337,19 +1460,22 @@ window.showAccountInfo = function() {
       <strong>Friends:</strong> ${state.friends.length}
     </div>
   `;
-  showModal("👤 Account Info", info, [
+  showModal("Account Info", info, [
     { label: "Close", type: "primary", onclick: "closeModal()" }
   ]);
 };
 
 window.showStatusSelector = function() {
-  const statuses = ["online", "away", "dnd", "offline"];
-  const buttons = statuses.map(s => ({
-    label: s.toUpperCase(),
-    type: state.userStatus === s ? "primary" : "secondary",
-    onclick: `setUserStatus('${s}'); closeModal();`
-  }));
-  showModal("Change Status", `<p style="color: var(--text);">Select your new status:</p>`, buttons);
+  const statuses = [
+    { key: "online", label: "Online", dot: "🟢" },
+    { key: "away", label: "Away", dot: "🟡" },
+    { key: "dnd", label: "Do Not Disturb", dot: "🔴" },
+    { key: "offline", label: "Invisible", dot: "⚪" },
+  ];
+  const content = `<div class="menu-list">${statuses.map(s =>
+    menuRow(s.dot, s.label, `setUserStatus('${s.key}'); closeModal();`)
+  ).join("")}</div>`;
+  showModal("Change Status", content, []);
 };
 
 // Channel Search
@@ -1364,7 +1490,8 @@ if (channelSearch) {
   });
 }
 
-// Message Search
+// Message Search — live filter of loaded messages, Enter triggers a full
+// server-side search across the channel's entire history (not just what's loaded).
 const messageSearch = $("messageSearch");
 if (messageSearch) {
   messageSearch.addEventListener("input", (e) => {
@@ -1378,54 +1505,160 @@ if (messageSearch) {
       m.style.opacity = content.includes(query) ? "1" : "0.3";
     });
   });
+
+  messageSearch.addEventListener("keypress", (e) => {
+    if (e.key !== "Enter") return;
+    const query = e.target.value.trim();
+    if (!query) return;
+    send({ type: "search_messages", channel: state.channel, query });
+  });
 }
 
-$("bookmarkBtn").addEventListener("click", () => {
-  const selected = messagesEl.querySelector(".msg");
-  if (!selected) {
+// FEATURE 12: Channel Polls (server-authoritative)
+function renderPoll(channel, poll) {
+  if (channel !== state.channel) return;
+  const container = $("pollContainer");
+  if (!container) return;
+
+  if (!poll) {
+    container.innerHTML = "";
+    container.classList.add("hidden");
+    return;
+  }
+
+  container.classList.remove("hidden");
+  const total = poll.counts.reduce((a, b) => a + b, 0) || 1;
+  const rows = poll.options.map((opt, i) => {
+    const pct = Math.round((poll.counts[i] / total) * 100);
+    return `
+      <button class="poll-option" onclick="voteInPoll('${poll.id}', ${i})">
+        <span class="poll-option-bar" style="width:${pct}%"></span>
+        <span class="poll-option-label">${escapeHtml(opt)}</span>
+        <span class="poll-option-count">${poll.counts[i]} · ${pct}%</span>
+      </button>
+    `;
+  }).join("");
+
+  container.innerHTML = `
+    <div class="poll-card">
+      <div class="poll-question">📊 ${escapeHtml(poll.question)}</div>
+      <div class="poll-options">${rows}</div>
+      <div class="poll-meta">Started by ${escapeHtml(poll.created_by)}</div>
+    </div>
+  `;
+}
+
+window.voteInPoll = function(pollId, optionIndex) {
+  send({ type: "poll_vote", poll_id: pollId, option: optionIndex });
+};
+
+window.openCreatePoll = function() {
+  const content = `
+    <div class="form-group">
+      <label class="form-label">Question</label>
+      <input type="text" id="pollQuestion" class="form-input" placeholder="What's the question?" autofocus>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Options (one per line, 2-6)</label>
+      <textarea id="pollOptions" class="form-input" rows="4" placeholder="Option A\nOption B\nOption C"></textarea>
+    </div>
+  `;
+  showModal("📊 New Poll", content, [
+    { label: "Cancel", type: "secondary", onclick: "closeModal()" },
+    { label: "Create Poll", type: "primary", onclick: "submitCreatePoll()" },
+  ]);
+};
+
+window.submitCreatePoll = function() {
+  const question = $("pollQuestion")?.value?.trim();
+  const options = ($("pollOptions")?.value || "")
+    .split("\n")
+    .map((o) => o.trim())
+    .filter(Boolean)
+    .slice(0, 6);
+  closeModal();
+  if (!question || options.length < 2) {
+    showError("A poll needs a question and at least 2 options");
+    return;
+  }
+  send({ type: "poll_create", question, options });
+};
+
+// FEATURE 11: Server-backed full-history message search
+window.handleSearchResults = function(packet) {
+  const results = packet.results || [];
+  if (results.length === 0) {
+    showInfo(`No messages found for "${packet.query}"`);
+    return;
+  }
+  const rows = results.map((m) => `
+    <div style="padding:8px 0; border-bottom:1px solid #25282c;">
+      <strong>${escapeHtml(m.author)}</strong>
+      <span style="color:var(--senary); font-size:12px;"> ${new Date(m.created_at * 1000).toLocaleString()}</span>
+      <br>${escapeHtml(m.content)}
+    </div>
+  `).join("");
+  showModal(`🔎 "${packet.query}" in #${packet.channel}`, rows, [
+    { label: "Close", type: "primary", onclick: "closeModal()" },
+  ]);
+};
+
+window.bookmarkLatestMessage = function(msgId) {
+  if (!msgId) {
+    const selected = messagesEl.querySelector(".msg:last-child");
+    msgId = selected?.dataset?.msgId;
+  }
+  if (!msgId) {
     showError("No messages to bookmark");
     return;
   }
-  const msgId = selected.dataset.msgId;
-  if (msgId && !state.bookmarkedMessages.has(msgId)) {
+  if (state.bookmarkedMessages.has(msgId)) {
+    unbookmarkMessage(msgId);
+    showInfo("Bookmark removed");
+  } else {
     bookmarkMessage(msgId);
-    showError("Message bookmarked!");
+    showSuccess("Message bookmarked!");
   }
-});
+};
 
-$("viewBookmarksBtn").addEventListener("click", () => {
+window.openBookmarksList = function() {
   if (state.bookmarkedMessages.size === 0) {
-    showError("No bookmarked messages");
+    showInfo("No bookmarked messages yet");
     return;
   }
-  addMessage("System", `── Bookmarked Messages (${state.bookmarkedMessages.size}) ──`, "system");
-});
+  const rows = Array.from(state.bookmarkedMessages).map((id) => {
+    const box = document.getElementById(`msg-${id}`);
+    const author = box?.dataset?.msgAuthor || "?";
+    const text = box?.querySelector(".msg-body")?.textContent || "(message not loaded)";
+    return `<div style="padding:8px 0; border-bottom:1px solid #25282c;"><strong>${escapeHtml(author)}</strong><br><span style="color:var(--senary);">${escapeHtml(text)}</span></div>`;
+  }).join("");
+  showModal("🔖 Bookmarked Messages", rows, [
+    { label: "Close", type: "primary", onclick: "closeModal()" },
+  ]);
+};
 
-$("setNameColorBtn").addEventListener("click", () => {
+window.openSetNameColor = function() {
   if (!state.isAuthed) return;
   showPromptModal("🎨 Set Name Color", "Enter color name or hex code (e.g., red, #7289da):", "handleSetNameColor");
-});
+};
 
 window.handleSetNameColor = function(color) {
   send({ type: "set_profile", name_color: color });
   showSuccess("Name color updated");
 };
 
-$("setProfilePicBtn").addEventListener("click", () => {
+window.openSetAvatar = function() {
   if (!state.isAuthed) return;
   showPromptModal("🖼️ Set Avatar", "Enter avatar image URL:", "handleSetAvatar");
-});
+};
 
 window.handleSetAvatar = function(url) {
   send({ type: "set_profile", avatar_url: url });
   showSuccess("Avatar updated");
 };
 
-$("settingsBtn").addEventListener("click", () => {
-  showError(`⚙️ Settings\n\n- Username: ${state.username}\n- Role: ${state.role}\n- Blocked Users: ${state.blockedUsers.length}\n- Bookmarks: ${state.bookmarkedMessages.size}`);
-});
-
-$("logoutBtn").addEventListener("click", () => {
+window.doLogout = function() {
+  closeModal();
   endCall(false);
   if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
     clearRemember();
@@ -1435,7 +1668,7 @@ $("logoutBtn").addEventListener("click", () => {
   }
   send({ type: "logout", remember_token: state.rememberToken });
   clearRemember();
-});
+};
 
 authForm.addEventListener("submit", (event) => {
   event.preventDefault();
@@ -1556,54 +1789,50 @@ function updateUnreadBadges() {
   }
 }
 
-// FEATURE 4: Message Pinning (Server-synced)
+// FEATURE 4: Message Pinning — server is the source of truth; state.pinnedMessages
+// is populated from "welcome"/"channel_switched"/"pinned_update" packets only.
 function pinMessage(msgId, channel = state.channel) {
-  if (!state.pinnedMessages.has(channel)) {
-    state.pinnedMessages.set(channel, []);
-  }
-  const pins = state.pinnedMessages.get(channel);
-  if (!pins.includes(msgId)) {
-    pins.push(msgId);
-    savePinnedMessages();
-    send({ type: "pin_message", id: msgId, channel });
-  }
+  send({ type: "pin_message", id: msgId, channel });
 }
 
 function unpinMessage(msgId, channel = state.channel) {
-  if (state.pinnedMessages.has(channel)) {
-    const pins = state.pinnedMessages.get(channel);
-    const idx = pins.indexOf(msgId);
-    if (idx !== -1) {
-      pins.splice(idx, 1);
-      savePinnedMessages();
-      send({ type: "unpin_message", id: msgId, channel });
-    }
-  }
+  send({ type: "unpin_message", id: msgId, channel });
 }
 
 function getPinnedMessages(channel = state.channel) {
   return state.pinnedMessages.get(channel) || [];
 }
 
-function savePinnedMessages() {
-  const data = {};
-  for (const [ch, msgs] of state.pinnedMessages) {
-    data[ch] = msgs;
-  }
-  localStorage.setItem("pychatter.pinned", JSON.stringify(data));
+function updatePinnedButton() {
+  const btn = $("pinnedMessagesBtn");
+  if (!btn) return;
+  const count = getPinnedMessages().length;
+  btn.textContent = count > 0 ? `📌 ${count}` : "📌";
+  btn.classList.toggle("has-pins", count > 0);
 }
 
-function loadPinnedMessages() {
-  try {
-    const saved = localStorage.getItem("pychatter.pinned");
-    if (saved) {
-      const data = JSON.parse(saved);
-      state.pinnedMessages = new Map(Object.entries(data));
-    }
-  } catch {
-    state.pinnedMessages = new Map();
+window.openPinnedMessages = function() {
+  const pins = getPinnedMessages();
+  if (pins.length === 0) {
+    showInfo("No pinned messages in this channel");
+    return;
   }
-}
+  const rows = pins.map((id) => {
+    const box = document.getElementById(`msg-${id}`);
+    const author = box?.dataset?.msgAuthor || "?";
+    const text = box?.querySelector(".msg-body")?.textContent || "(not loaded — scroll up)";
+    const unpinBtn = (state.role === "admin" || state.role === "mod")
+      ? `<button class="btn-modal secondary" style="padding:4px 10px;font-size:12px;" onclick="unpinMessage(${id}); closeModal();">Unpin</button>`
+      : "";
+    return `<div style="display:flex; justify-content:space-between; align-items:center; gap:12px; padding:8px 0; border-bottom:1px solid #25282c;">
+      <div><strong>${escapeHtml(author)}</strong><br><span style="color:var(--senary);">${escapeHtml(text)}</span></div>
+      ${unpinBtn}
+    </div>`;
+  }).join("");
+  showModal(`📌 Pinned in #${state.channel}`, rows, [
+    { label: "Close", type: "primary", onclick: "closeModal()" },
+  ]);
+};
 
 // FEATURE 5: Message Threading/Replies (Client-side local threads)
 function replyToMessage(msgId, text) {

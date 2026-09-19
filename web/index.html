@@ -114,15 +114,18 @@
           </div>
         </div>
         <div class="top-actions">
+          <button id="pinnedMessagesBtn" class="icon-call" type="button" title="Pinned Messages" onclick="openPinnedMessages()">📌</button>
           <button id="voiceCallBtn" class="icon-call" type="button" title="Start Voice Call">Voice</button>
           <button id="videoCallBtn" class="icon-call" type="button" title="Start Video Call">Video</button>
           <div id="roleBadge" class="role-badge">member</div>
         </div>
       </header>
 
-      <div class="message-toolbar" style="padding: 8px 12px; background: rgba(255,255,255,0.02); border-bottom: 1px solid var(--line);">
-        <input id="messageSearch" type="text" placeholder="Search messages..." style="width: 100%; padding: 6px 8px; border: 1px solid var(--line); background: rgba(255,255,255,0.05); color: var(--text); border-radius: 4px;">
+      <div class="message-toolbar">
+        <input id="messageSearch" type="text" class="message-search-input" placeholder="Search messages... (Enter searches full history)">
+        <button class="icon-call" type="button" title="Create Poll" onclick="openCreatePoll()">📊</button>
       </div>
+      <div id="pollContainer" class="poll-container hidden"></div>
       <section id="messages" class="messages"></section>
 
       <section id="callPanel" class="call-panel hidden">
@@ -130,6 +133,11 @@
         <div class="video-grid">
           <video id="remoteVideo" autoplay playsinline></video>
           <video id="localVideo" autoplay playsinline muted></video>
+        </div>
+        <div class="call-controls">
+          <button id="toggleMicBtn" class="call-control-btn" type="button" title="Mute / Unmute">🎤</button>
+          <button id="toggleCamBtn" class="call-control-btn" type="button" title="Camera On / Off">📷</button>
+          <button id="hangupBtn" class="call-control-btn danger" type="button" title="End Call">📞</button>
         </div>
       </section>
 
@@ -155,43 +163,13 @@
         <ul id="friendsList" class="list"></ul>
         <div id="requestsMeta" class="subhead">Incoming Requests - 0</div>
         <ul id="friendRequestsList" class="list"></ul>
-        <div class="stack">
-          <button id="addFriendBtn" class="btn ghost" type="button">Add Friend</button>
-          <button id="acceptFriendBtn" class="btn ghost" type="button">Accept Request</button>
-          <button id="removeFriendBtn" class="btn ghost" type="button">Remove Friend</button>
+        <div class="friend-action-row">
+          <button id="addFriendBtn" class="quick-action-btn" title="Add Friend" type="button">➕</button>
+          <button id="acceptFriendBtn" class="quick-action-btn" title="Accept Selected Request" type="button">✅</button>
+          <button id="removeFriendBtn" class="quick-action-btn" title="Remove Selected Friend" type="button">✕</button>
         </div>
       </section>
 
-      <section class="pane-block action-grid">
-        <h2>Quick Actions</h2>
-        <button id="dmBtn" class="btn ghost" type="button">Message User</button>
-        <button id="dmHistoryBtn" class="btn ghost" type="button">DM History</button>
-        <button id="hangupBtn" class="btn ghost" type="button">End Call</button>
-        <button id="toggleMicBtn" class="btn ghost" type="button">Mute / Unmute</button>
-        <button id="toggleCamBtn" class="btn ghost" type="button">Cam On / Off</button>
-      </section>
-
-      <section class="pane-block action-grid">
-        <h2>User Actions</h2>
-        <button id="blockUserBtn" class="btn ghost" type="button">Block User</button>
-        <button id="unblockUserBtn" class="btn ghost" type="button">Unblock User</button>
-        <button id="bookmarkBtn" class="btn ghost" type="button">Bookmark Message</button>
-        <button id="viewBookmarksBtn" class="btn ghost" type="button">View Bookmarks</button>
-      </section>
-
-      <section class="pane-block action-grid">
-        <h2>Profile Settings</h2>
-        <button id="changeNameBtn" class="btn ghost" type="button">Change Username</button>
-        <button id="setProfilePicBtn" class="btn ghost" type="button">Set Avatar</button>
-        <button id="setNameColorBtn" class="btn ghost" type="button">Set Name Color</button>
-        <button id="promoteBtn" class="btn ghost" type="button">Set Member Role</button>
-      </section>
-
-      <section class="pane-block action-grid">
-        <h2>Account</h2>
-        <button id="settingsBtn" class="btn ghost" type="button">Settings</button>
-        <button id="logoutBtn" class="btn ghost danger" type="button">Log Out</button>
-      </section>
     </aside>
 
   </main>

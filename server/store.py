@@ -617,6 +617,26 @@ class ChatStore:
                 row["reactions"] = reactions.get(row["id"], {})
         return rows
 
+    def search_channel_messages(self, channel: str, query: str, limit: int = 30) -> list[dict[str, Any]]:
+        query = query.strip()
+        if not query:
+            return []
+        with self.lock:
+            cur = self.conn.cursor()
+            cur.execute(
+                """
+                SELECT id, channel, author, content, created_at
+                FROM channel_messages
+                WHERE channel = ? AND deleted = 0 AND content LIKE ? ESCAPE '\\'
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (channel, "%" + query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%", limit),
+            )
+            rows = [dict(row) for row in cur.fetchall()]
+        rows.reverse()
+        return rows
+
     def edit_message(self, msg_id: int, author: str, new_content: str) -> tuple[bool, str]:
         """Edit a message — only the original author may do so."""
         with self.lock:
