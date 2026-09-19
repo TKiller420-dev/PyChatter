@@ -1151,69 +1151,99 @@ $("statusBtn").addEventListener("click", () => {
   const current = statuses.indexOf(state.userStatus);
   const next = statuses[(current + 1) % statuses.length];
   setUserStatus(next);
-  showNotification("Status Changed", { body: `You are now ${next}` });
+  showSuccess(`Status changed to ${next}`);
 });
 
 $("searchUsersGlobalBtn").addEventListener("click", () => {
-  const query = prompt("Search users:");
-  if (!query) return;
+  showPromptModal("🔍 Search Users & Channels", "What would you like to search?", "performSearch");
+});
+
+window.performSearch = function(query) {
   const results = performGlobalSearch(query);
   if (results.users.length === 0 && results.channels.length === 0) {
-    alert("No results found");
+    showError("No results found");
     return;
   }
-  addMessage("System", `── Search Results for "${query}" ──`, "system");
+  addMessage("System", `Search Results for "${query}"`, "system");
   if (results.users.length > 0) {
-    addMessage("System", `Users: ${results.users.join(", ")}`, "system");
+    addMessage("System", `👥 Users: ${results.users.join(", ")}`, "system");
   }
   if (results.channels.length > 0) {
-    addMessage("System", `Channels: ${results.channels.join(", ")}`, "system");
+    addMessage("System", `💬 Channels: ${results.channels.join(", ")}`, "system");
   }
-});
+  showSuccess(`Found ${results.users.length + results.channels.length} results`);
+};
 
 $("favoritesBtn").addEventListener("click", () => {
   if (!state.isAuthed) return;
   if (state.favorites.size === 0) {
-    alert("No favorites yet. Star channels to add them.");
+    showInfo("No favorites yet. Star channels to add them.");
     return;
   }
-  addMessage("System", `── Your Favorites (${state.favorites.size}) ──`, "system");
-  state.favorites.forEach(fav => {
-    addMessage("System", `⭐ ${fav}`, "system");
-  });
+  const favList = Array.from(state.favorites).map(f => `⭐ ${f}`).join("<br>");
+  const content = `<div style="color: var(--text); line-height: 1.8;">${favList}</div>`;
+  showModal("⭐ Your Favorites", content, [
+    { label: "Close", type: "primary", onclick: "closeModal()" }
+  ]);
 });
 
 $("unreadBtn").addEventListener("click", () => {
   const unread = Object.entries(state.unreadCount)
     .filter(([_, count]) => count > 0)
-    .map(([ch, count]) => `#${ch} (${count})`)
-    .join(", ");
+    .map(([ch, count]) => `#${ch} <span style="color: var(--brand);">(${count})</span>`);
 
-  if (!unread) {
-    alert("All caught up! No unread messages.");
+  if (unread.length === 0) {
+    showSuccess("All caught up! No unread messages.");
     return;
   }
-  alert(`Unread messages:\n${unread}`);
+  const content = `<div style="color: var(--text); line-height: 1.8;">${unread.join("<br>")}</div>`;
+  showModal("🔔 Unread Messages", content, [
+    { label: "Close", type: "primary", onclick: "closeModal()" }
+  ]);
 });
 
 $("quickMenuBtn").addEventListener("click", () => {
-  const menu = prompt(`⚙️ Quick Menu\n\n1. Set Custom Status\n2. View Account Info\n3. Change Status\n\nEnter option (1-3):`);
-  switch (menu) {
-    case "1":
-      const customMsg = prompt("Enter custom status (leave blank to clear):");
-      setCustomStatus(customMsg || "");
-      break;
-    case "2":
-      alert(`📊 Account Info\n\nUsername: ${state.username}\nRole: ${state.role}\nStatus: ${state.userStatus}\nChannels: ${state.channels.length}\nFriends: ${state.friends.length}`);
-      break;
-    case "3":
-      const newStatus = prompt("Enter status (online/away/dnd/offline):");
-      if (["online", "away", "dnd", "offline"].includes(newStatus)) {
-        setUserStatus(newStatus);
-      }
-      break;
-  }
+  const content = `
+    <div style="color: var(--text); display: grid; gap: 12px;">
+      <button class="btn-modal primary" style="width: 100%;" onclick="showPromptModal('Set Custom Status', 'Enter your status message', 'setCustomStatusFromModal')">Set Status Message</button>
+      <button class="btn-modal primary" style="width: 100%;" onclick="showAccountInfo()">View Account Info</button>
+      <button class="btn-modal primary" style="width: 100%;" onclick="showStatusSelector()">Change Status</button>
+    </div>
+  `;
+  showModal("⚙️ Quick Menu", content, [
+    { label: "Close", type: "secondary", onclick: "closeModal()" }
+  ]);
 });
+
+window.setCustomStatusFromModal = function(msg) {
+  setCustomStatus(msg);
+  showSuccess("Custom status updated");
+};
+
+window.showAccountInfo = function() {
+  const info = `
+    <div style="color: var(--text); line-height: 2;">
+      <strong>Username:</strong> ${state.username}<br>
+      <strong>Role:</strong> <span style="color: var(--brand);">${state.role}</span><br>
+      <strong>Status:</strong> ${state.userStatus}<br>
+      <strong>Channels:</strong> ${state.channels.length}<br>
+      <strong>Friends:</strong> ${state.friends.length}
+    </div>
+  `;
+  showModal("👤 Account Info", info, [
+    { label: "Close", type: "primary", onclick: "closeModal()" }
+  ]);
+};
+
+window.showStatusSelector = function() {
+  const statuses = ["online", "away", "dnd", "offline"];
+  const buttons = statuses.map(s => ({
+    label: s.toUpperCase(),
+    type: state.userStatus === s ? "primary" : "secondary",
+    onclick: `setUserStatus('${s}'); closeModal();`
+  }));
+  showModal("Change Status", `<p style="color: var(--text);">Select your new status:</p>`, buttons);
+};
 
 // Channel Search
 const channelSearch = $("channelSearch");
@@ -1580,6 +1610,102 @@ function showTypingUsers() {
   if (typing.length === 0) return "";
   if (typing.length === 1) return `${typing[0]} is typing...`;
   return `${typing.join(", ")} are typing...`;
+}
+
+// ─── Modern Modal System ────────────────────────────────────────────────────
+function showModal(title, content, buttons = []) {
+  const overlay = $("modalOverlay");
+  const titleEl = $("modalTitle");
+  const bodyEl = $("modalBody");
+  const footerEl = $("modalFooter");
+
+  titleEl.textContent = title;
+  bodyEl.innerHTML = content;
+  footerEl.innerHTML = buttons
+    .map(btn => `<button class="btn-modal ${btn.type || 'secondary'}" onclick="${btn.onclick}">${btn.label}</button>`)
+    .join("");
+
+  overlay.classList.add("active");
+}
+
+function closeModal() {
+  const overlay = $("modalOverlay");
+  overlay.classList.remove("active");
+}
+
+function showPromptModal(title, label = "Enter value", onSubmit) {
+  const content = `
+    <div class="form-group">
+      <label class="form-label">${label}</label>
+      <input type="text" id="promptInput" class="form-input" placeholder="Type here..." autofocus>
+    </div>
+  `;
+
+  const buttons = [
+    { label: "Cancel", type: "secondary", onclick: "closeModal()" },
+    {
+      label: "Submit",
+      type: "primary",
+      onclick: `submitPrompt('${onSubmit}')`
+    },
+  ];
+
+  showModal(title, content, buttons);
+
+  // Allow Enter key to submit
+  setTimeout(() => {
+    const input = $("promptInput");
+    if (input) {
+      input.addEventListener("keypress", (e) => {
+        if (e.key === "Enter") submitPrompt(onSubmit);
+      });
+    }
+  }, 100);
+}
+
+function submitPrompt(funcName) {
+  const input = $("promptInput");
+  const value = input?.value?.trim();
+  closeModal();
+  if (value && window[funcName]) {
+    window[funcName](value);
+  }
+}
+
+function showConfirmModal(title, message, onConfirm) {
+  const buttons = [
+    { label: "Cancel", type: "secondary", onclick: "closeModal()" },
+    { label: "Confirm", type: "danger", onclick: onConfirm },
+  ];
+
+  showModal(title, `<p style="color: var(--text); margin: 0;">${message}</p>`, buttons);
+}
+
+// ─── Toast Notifications ────────────────────────────────────────────────────
+function showToast(message, type = "info") {
+  const container = $("toastContainer");
+  const toast = document.createElement("div");
+  toast.className = `toast ${type}`;
+  toast.textContent = message;
+
+  container.appendChild(toast);
+
+  setTimeout(() => {
+    toast.style.animation = "toastSlideIn 0.3s ease reverse";
+    setTimeout(() => toast.remove(), 300);
+  }, 3000);
+}
+
+function showSuccess(message) {
+  showToast(message, "success");
+}
+
+function showError(message) {
+  showToast(message, "error");
+}
+
+function showInfo(message) {
+  showToast(message, "info");
 }
 
 // ─── Notification System ─────────────────────────────────────────────────────

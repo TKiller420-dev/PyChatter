@@ -358,6 +358,251 @@ body {
   margin-top: 4px;
 }
 
+/* Modern Modal System */
+.modal-overlay {
+  display: none;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(4px);
+  z-index: 1000;
+  animation: fadeIn 0.2s ease;
+}
+
+.modal-overlay.active {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.modal-content {
+  background: var(--secondary);
+  border: 1px solid #3a3f47;
+  border-radius: 12px;
+  padding: 0;
+  width: 90%;
+  max-width: 500px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.8);
+  animation: slideUp 0.3s ease;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+@keyframes slideUp {
+  from { transform: translateY(20px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.modal-header {
+  padding: 20px;
+  border-bottom: 1px solid #25282c;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.modal-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--title);
+  margin: 0;
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  color: var(--senary);
+  font-size: 24px;
+  cursor: pointer;
+  padding: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  transition: all 0.2s;
+}
+
+.modal-close:hover {
+  background: rgba(88, 101, 242, 0.1);
+  color: var(--brand);
+}
+
+.modal-body {
+  padding: 20px;
+}
+
+.modal-footer {
+  padding: 16px 20px;
+  border-top: 1px solid #25282c;
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.form-group {
+  margin-bottom: 16px;
+}
+
+.form-group:last-child {
+  margin-bottom: 0;
+}
+
+.form-label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.form-input {
+  width: 100%;
+  padding: 10px 12px;
+  background: var(--tertiary);
+  border: 1px solid #3a3f47;
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 14px;
+  font-family: inherit;
+  transition: all 0.2s;
+}
+
+.form-input:focus {
+  outline: none;
+  border-color: var(--brand);
+  box-shadow: 0 0 0 3px rgba(88, 101, 242, 0.1);
+}
+
+.form-input::placeholder {
+  color: var(--senary);
+}
+
+.btn-group {
+  display: flex;
+  gap: 8px;
+}
+
+.btn-modal {
+  flex: 1;
+  padding: 10px 16px;
+  border: none;
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.btn-modal.primary {
+  background: var(--brand);
+  color: white;
+}
+
+.btn-modal.primary:hover {
+  background: #5255e5;
+  transform: translateY(-1px);
+}
+
+.btn-modal.secondary {
+  background: var(--tertiary);
+  color: var(--text);
+  border: 1px solid #3a3f47;
+}
+
+.btn-modal.secondary:hover {
+  background: #3a3f47;
+  border-color: var(--brand);
+}
+
+.btn-modal.danger {
+  background: rgba(237, 66, 69, 0.1);
+  color: #ef4747;
+  border: 1px solid #ef4747;
+}
+
+.btn-modal.danger:hover {
+  background: rgba(237, 66, 69, 0.2);
+}
+
+.toast-container {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 2000;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.toast {
+  background: var(--secondary);
+  border: 1px solid #3a3f47;
+  border-radius: 8px;
+  padding: 16px 20px;
+  color: var(--text);
+  min-width: 300px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  animation: toastSlideIn 0.3s ease;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+@keyframes toastSlideIn {
+  from { transform: translateX(400px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+.toast.success {
+  border-color: var(--success);
+  background: rgba(67, 181, 129, 0.1);
+}
+
+.toast.success::before {
+  content: "✓";
+  color: var(--success);
+  font-weight: bold;
+  font-size: 18px;
+}
+
+.toast.error {
+  border-color: #ef4747;
+  background: rgba(237, 66, 69, 0.1);
+}
+
+.toast.error::before {
+  content: "✕";
+  color: #ef4747;
+  font-weight: bold;
+  font-size: 18px;
+}
+
+.toast.info {
+  border-color: var(--brand);
+  background: rgba(88, 101, 242, 0.1);
+}
+
+.toast.info::before {
+  content: "ℹ";
+  color: var(--brand);
+  font-weight: bold;
+  font-size: 18px;
+}
+
 .pane-footer {
   padding: 12px 10px;
   border-top: 1px solid #25282c;
