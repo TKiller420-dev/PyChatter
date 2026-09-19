@@ -174,6 +174,8 @@ class ChatStore:
                 cur.execute("ALTER TABLE channel_messages ADD COLUMN edited_at INTEGER")
             if "deleted" not in cm_cols:
                 cur.execute("ALTER TABLE channel_messages ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0")
+            if "reply_to" not in cm_cols:
+                cur.execute("ALTER TABLE channel_messages ADD COLUMN reply_to INTEGER")
 
             cur.execute(
                 """
@@ -579,24 +581,42 @@ class ChatStore:
             cur.execute("SELECT name FROM channels ORDER BY name ASC")
             return [row["name"] for row in cur.fetchall()]
 
-    def save_channel_message(self, msg_id: int, channel: str, author: str, content: str) -> None:
+    def save_channel_message(
+        self, msg_id: int, channel: str, author: str, content: str, reply_to: int | None = None
+    ) -> None:
         with self.lock:
             cur = self.conn.cursor()
             cur.execute(
                 """
-                INSERT OR REPLACE INTO channel_messages (id, channel, author, content, created_at)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT OR REPLACE INTO channel_messages (id, channel, author, content, created_at, reply_to)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (msg_id, channel, author, content, int(time.time())),
+                (msg_id, channel, author, content, int(time.time()), reply_to),
             )
             self.conn.commit()
+
+    def get_reply_preview(self, msg_id: int) -> dict[str, Any] | None:
+        with self.lock:
+            cur = self.conn.cursor()
+            cur.execute(
+                "SELECT id, author, content, deleted FROM channel_messages WHERE id = ?",
+                (msg_id,),
+            )
+            row = cur.fetchone()
+        if row is None:
+            return None
+        return {
+            "id": row["id"],
+            "author": row["author"],
+            "content": "[deleted]" if row["deleted"] else row["content"],
+        }
 
     def get_channel_history(self, channel: str, limit: int = 50) -> list[dict[str, Any]]:
         with self.lock:
             cur = self.conn.cursor()
             cur.execute(
                 """
-                SELECT id, channel, author, content, created_at, edited_at, deleted
+                SELECT id, channel, author, content, created_at, edited_at, deleted, reply_to
                 FROM channel_messages
                 WHERE channel = ?
                 ORDER BY created_at DESC
@@ -617,6 +637,8 @@ class ChatStore:
             reactions = self.get_reactions_bulk([r["id"] for r in rows])
             for row in rows:
                 row["reactions"] = reactions.get(row["id"], {})
+        for row in rows:
+            row["reply_preview"] = self.get_reply_preview(row["reply_to"]) if row.get("reply_to") else None
         return rows
 
     def search_channel_messages(self, channel: str, query: str, limit: int = 30) -> list[dict[str, Any]]:

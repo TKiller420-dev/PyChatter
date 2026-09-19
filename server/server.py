@@ -339,9 +339,19 @@ class ChatServer:
                         })
                         continue
 
+                    reply_to = None
+                    reply_preview = None
+                    raw_reply_to = packet.get("reply_to")
+                    if raw_reply_to:
+                        try:
+                            reply_to = int(raw_reply_to)
+                            reply_preview = self.store.get_reply_preview(reply_to)
+                        except (TypeError, ValueError):
+                            reply_to = None
+
                     msg_id = fast_hash(f"{username}:{time.time_ns()}:{content}")
                     created_at = int(time.time())
-                    self.store.save_channel_message(msg_id, channel, username, content)
+                    self.store.save_channel_message(msg_id, channel, username, content, reply_to)
                     profile = self.store.get_user_profile(username)
                     packet_out = {
                         "type": "message",
@@ -352,9 +362,21 @@ class ChatServer:
                         "author_name_color": profile.get("name_color", ""),
                         "content": content,
                         "created_at": created_at,
+                        "reply_preview": reply_preview,
                     }
                     self.store.log_event("channel_message", actor=username, channel=channel, metadata={"id": msg_id})
                     await self.broadcast(channel, packet_out)
+
+                    # Lightweight activity ping (no content) so clients viewing a
+                    # different channel can show a real unread indicator — they
+                    # never receive the "message" packet itself since broadcast()
+                    # only reaches sockets currently in that channel.
+                    for other_writer, other_channel in list(self.client_channels.items()):
+                        if other_channel != channel and other_writer in self.clients:
+                            try:
+                                await self.send(other_writer, {"type": "channel_activity", "channel": channel})
+                            except Exception:
+                                pass
 
                     mentioned = set(re.findall(r"@([a-z0-9_-]{1,24})", content.lower()))
                     mentioned.discard(username)

@@ -13,14 +13,9 @@
   <div id="authView" class="auth-view">
     <div class="auth-noise"></div>
     <section class="auth-card">
-      <div class="auth-brand">PyChatter Gateway</div>
-      <h1 id="authTitle">Welcome back, chatter</h1>
-      <p id="authSubtitle">Log in to continue chatting with your server.</p>
-
-      <div class="auth-switch">
-        <button id="showLoginBtn" class="auth-tab active" type="button">Sign In</button>
-        <button id="showRegisterBtn" class="auth-tab" type="button">Register</button>
-      </div>
+      <div class="auth-brand">PYCHATTER</div>
+      <h1 id="authTitle">Welcome back!</h1>
+      <p id="authSubtitle">We're so excited to see you again!</p>
 
       <form id="authForm" class="auth-form">
         <label>
@@ -33,9 +28,14 @@
         </label>
         <label class="remember-row">
           <input id="rememberMe" type="checkbox" checked>
-          <span>Remember me on this device</span>
+          <span>Remember me</span>
         </label>
-        <button id="authSubmitBtn" type="submit" class="btn primary">Sign In</button>
+        <button id="authSubmitBtn" type="submit" class="btn primary">Log In</button>
+        <p class="auth-switch-line">
+          <span id="authSwitchLabel">Need an account?</span>
+          <button id="showRegisterBtn" class="auth-link" type="button">Register</button>
+          <button id="showLoginBtn" class="auth-link hidden" type="button">Sign In</button>
+        </p>
       </form>
       <p id="authStatus" class="auth-status"></p>
     </section>
@@ -144,6 +144,7 @@
         </div>
       </section>
 
+      <div id="replyBanner" class="reply-banner hidden"></div>
       <footer class="composer">
         <input id="messageInput" type="text" placeholder="Message #general">
         <button id="sendBtn" class="btn primary" type="button">Send</button>

@@ -30,7 +30,7 @@ const state = {
   favorites: new Set(), // Feature 2: Favorite channels/users
   unreadCount: {}, // Feature 3: Unread message counts
   pinnedMessages: new Map(), // Feature 4: Pinned messages per channel
-  messageThreads: new Map(), // Feature 5: Message threads/replies
+  replyingTo: null, // Feature 5: {id, author, content} of message being replied to
   userTypingStatus: {}, // Feature 6: Who's typing
   recentMentions: [], // Feature 7: @mentions tracking
   memberStatuses: {}, // username -> "online" | "idle" | "dnd" | "offline" (server-synced)
@@ -127,13 +127,14 @@ function attemptTokenLogin() {
 function setAuthMode(mode) {
   state.authMode = mode;
   const isLogin = mode === "login";
-  showLoginBtn.classList.toggle("active", isLogin);
-  showRegisterBtn.classList.toggle("active", !isLogin);
-  authTitle.textContent = isLogin ? "Welcome back" : "Create your account";
+  showLoginBtn.classList.toggle("hidden", isLogin);
+  showRegisterBtn.classList.toggle("hidden", !isLogin);
+  $("authSwitchLabel").textContent = isLogin ? "Need an account?" : "Already have an account?";
+  authTitle.textContent = isLogin ? "Welcome back!" : "Create an account";
   authSubtitle.textContent = isLogin
-    ? "Log in to continue chatting with your server."
-    : "Register once, then jump into channels and DMs.";
-  authSubmitBtn.textContent = isLogin ? "Sign In" : "Register";
+    ? "We're so excited to see you again!"
+    : "";
+  authSubmitBtn.textContent = isLogin ? "Log In" : "Continue";
   authStatus.textContent = "";
 }
 
@@ -569,17 +570,6 @@ window.applyTimeout = function(name, seconds) {
   showSuccess(`${name} timed out`);
 };
 
-function renderList(container, items, activeValue, onClick) {
-  container.innerHTML = "";
-  items.forEach((item) => {
-    const li = document.createElement("li");
-    li.textContent = item;
-    if (item === activeValue) li.classList.add("active");
-    li.addEventListener("click", () => onClick(item));
-    container.appendChild(li);
-  });
-}
-
 function renderFriends() {
   if (friendsMetaEl) {
     friendsMetaEl.textContent = `Friends - ${state.friends.length}`;
@@ -683,6 +673,26 @@ function highlightMentions(escaped) {
   });
 }
 
+// Discord-subset markdown. Runs on already-escaped text, so it's safe to
+// inject the handful of tags below — no user-controlled HTML can slip in.
+function renderMarkdown(escaped) {
+  // Code blocks first so ** / * / ~~ inside them aren't touched.
+  const blocks = [];
+  let text = escaped.replace(/```([\s\S]*?)```/g, (_, code) => {
+    blocks.push(`<pre class="msg-codeblock"><code>${code.trim()}</code></pre>`);
+    return `■${blocks.length - 1}■`;
+  });
+
+  text = text.replace(/`([^`\n]+)`/g, '<code class="msg-inline-code">$1</code>');
+  text = text.replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
+  text = text.replace(/(?:^|(?<=\s))_([^_\n]+)_(?=\s|$)/g, "<em>$1</em>");
+  text = text.replace(/\*([^*\n]+)\*/g, "<em>$1</em>");
+  text = text.replace(/~~([^~\n]+)~~/g, "<del>$1</del>");
+
+  text = text.replace(/■(\d+)■/g, (_, i) => blocks[Number(i)]);
+  return text;
+}
+
 function buildReactRow(msgId, reactions) {
   const row = document.createElement("div");
   row.className = "react-row";
@@ -721,7 +731,7 @@ function toggleEmojiPicker(msgId, anchor) {
   setTimeout(() => document.addEventListener("click", () => picker.remove(), { once: true }), 0);
 }
 
-function buildMsgToolbar(msgId, author) {
+function buildMsgToolbar(msgId, author, content) {
   const bar = document.createElement("div");
   bar.className = "msg-toolbar";
 
@@ -730,6 +740,12 @@ function buildMsgToolbar(msgId, author) {
   reactBtn.title = "React";
   reactBtn.addEventListener("click", (e) => { e.stopPropagation(); toggleEmojiPicker(msgId, reactBtn); });
   bar.appendChild(reactBtn);
+
+  const replyBtn = document.createElement("button");
+  replyBtn.textContent = "↩️";
+  replyBtn.title = "Reply";
+  replyBtn.addEventListener("click", (e) => { e.stopPropagation(); startReply(msgId, author, content); });
+  bar.appendChild(replyBtn);
 
   const bookmarkBtn = document.createElement("button");
   bookmarkBtn.textContent = state.bookmarkedMessages.has(String(msgId)) ? "🔖" : "📑";
@@ -824,28 +840,86 @@ window.handleDeleteMessage = function(msgId) {
   showSuccess("Message deleted");
 };
 
+// Discord groups consecutive messages from the same author sent within a
+// short window: one avatar+name header, subsequent lines just show the
+// text with the timestamp revealed on hover.
+const GROUP_WINDOW_SECONDS = 7 * 60;
+let _lastRenderedAuthor = "";
+let _lastRenderedAt = 0;
+
+function resetMessageGrouping() {
+  _lastRenderedAuthor = "";
+  _lastRenderedAt = 0;
+}
+
+function shouldGroupWith(author, createdAt) {
+  if (!author || !createdAt) return false;
+  if (author !== _lastRenderedAuthor) return false;
+  return createdAt - _lastRenderedAt < GROUP_WINDOW_SECONDS;
+}
+
 function buildMessageEl(opts) {
   const isSystem = opts.type === "system";
   const isDeleted = !!opts.deleted;
+  const author = opts.author || "";
+  const createdAt = opts.created_at || 0;
+
+  const grouped = !isSystem && !opts.reply_preview && shouldGroupWith(author, createdAt);
+  if (!isSystem) {
+    _lastRenderedAuthor = author;
+    _lastRenderedAt = createdAt || _lastRenderedAt;
+  } else {
+    resetMessageGrouping();
+  }
 
   const box = document.createElement("article");
-  box.className = "msg" + (isSystem ? " system" : "") + (isDeleted ? " msg-deleted" : "");
+  box.className = "msg"
+    + (isSystem ? " system" : "")
+    + (isDeleted ? " msg-deleted" : "")
+    + (grouped ? " msg-grouped" : "");
   if (opts.id) {
     box.id = `msg-${opts.id}`;
     box.dataset.msgId = opts.id;
-    box.dataset.msgAuthor = opts.author || "";
+    box.dataset.msgAuthor = author;
   }
 
-  const head = document.createElement("div");
-  head.className = "who";
-  const ts = opts.created_at
-    ? new Date(opts.created_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+  const ts = createdAt
+    ? new Date(createdAt * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
     : "";
-  const author = opts.author || "";
   const profile = profileFor(author);
   const authorColor = opts.author_name_color || profile.name_color || "";
   const authorStyle = authorColor ? ` style="color:${escapeHtml(authorColor)}"` : "";
-  head.innerHTML = `<span class="msg-author"${authorStyle}>${escapeHtml(author)}</span>${ts ? ` <span class="msg-ts">${ts}</span>` : ""}`;
+  const initial = escapeHtml((author || "?").slice(0, 1).toUpperCase());
+  const avatarStyle = profile.avatar_url ? ` style="background-image:url('${escapeHtml(profile.avatar_url)}')"` : "";
+
+  if (!isSystem) {
+    const gutter = document.createElement("div");
+    gutter.className = "msg-gutter";
+    if (grouped) {
+      gutter.innerHTML = `<span class="msg-hover-ts">${ts}</span>`;
+    } else {
+      gutter.innerHTML = `<span class="msg-avatar${profile.avatar_url ? " has-image" : ""}"${avatarStyle}>${profile.avatar_url ? "" : initial}</span>`;
+    }
+    box.appendChild(gutter);
+  }
+
+  const content = document.createElement("div");
+  content.className = "msg-content";
+
+  if (opts.reply_preview) {
+    const quote = document.createElement("div");
+    quote.className = "msg-reply-quote";
+    const rp = opts.reply_preview;
+    quote.innerHTML = `<span class="reply-icon">↩</span><span class="reply-author">${escapeHtml(rp.author || "?")}</span><span class="reply-text">${escapeHtml((rp.content || "").slice(0, 100))}</span>`;
+    content.appendChild(quote);
+  }
+
+  if (!grouped) {
+    const head = document.createElement("div");
+    head.className = "who";
+    head.innerHTML = `<span class="msg-author"${authorStyle}>${escapeHtml(author)}</span>${ts ? ` <span class="msg-ts">${ts}</span>` : ""}`;
+    content.appendChild(head);
+  }
 
   const body = document.createElement("div");
   body.className = "msg-body";
@@ -853,7 +927,7 @@ function buildMessageEl(opts) {
   if (isDeleted) {
     body.innerHTML = "<em>[deleted]</em>";
   } else {
-    body.innerHTML = highlightMentions(escapeHtml(opts.content || ""));
+    body.innerHTML = renderMarkdown(highlightMentions(escapeHtml(opts.content || "")));
     if (opts.edited_at) {
       const mark = document.createElement("span");
       mark.className = "edited-mark";
@@ -861,14 +935,14 @@ function buildMessageEl(opts) {
       body.appendChild(mark);
     }
   }
-
-  box.appendChild(head);
-  box.appendChild(body);
+  content.appendChild(body);
 
   if (!isSystem && opts.id) {
-    if (!isDeleted) box.appendChild(buildMsgToolbar(opts.id, opts.author));
-    box.appendChild(buildReactRow(opts.id, opts.reactions || {}));
+    if (!isDeleted) content.appendChild(buildMsgToolbar(opts.id, opts.author, opts.content || ""));
+    content.appendChild(buildReactRow(opts.id, opts.reactions || {}));
   }
+
+  box.appendChild(content);
   return box;
 }
 
@@ -880,6 +954,7 @@ function addMessage(who, text, type = "normal") {
 
 function renderHistory(history) {
   messagesEl.innerHTML = "";
+  resetMessageGrouping();
   history.forEach((msg) => {
     messagesEl.appendChild(buildMessageEl({
       id: msg.id,
@@ -890,6 +965,7 @@ function renderHistory(history) {
       edited_at: msg.edited_at,
       deleted: msg.deleted,
       created_at: msg.created_at,
+      reply_preview: msg.reply_preview || null,
     }));
   });
   messagesEl.scrollTop = messagesEl.scrollHeight;
@@ -911,10 +987,13 @@ function updateTypingBanner() {
   const el = document.getElementById("typingIndicator");
   if (!el) return;
   const names = Object.keys(typingTimers).filter((u) => u !== state.username);
-  if (!names.length) { el.textContent = ""; return; }
-  el.textContent = names.length === 1
-    ? `${names[0]} is typing…`
-    : `${names.join(", ")} are typing…`;
+  if (!names.length) { el.innerHTML = ""; return; }
+  const label = names.length === 1
+    ? `<strong>${escapeHtml(names[0])}</strong> is typing`
+    : names.length === 2
+      ? `<strong>${escapeHtml(names[0])}</strong> and <strong>${escapeHtml(names[1])}</strong> are typing`
+      : `Several people are typing`;
+  el.innerHTML = `<span class="typing-dots"><span></span><span></span><span></span></span>${label}`;
 }
 
 function handlePacket(packet) {
@@ -997,13 +1076,18 @@ function handlePacket(packet) {
       channelTitle.textContent = `#${state.channel}`;
       channelMeta.textContent = `${state.channels.length} channels available`;
       inputEl.placeholder = `Message #${state.channel}`;
-      renderList(channelsEl, state.channels, state.channel, (name) => {
-        send({ type: "switch_channel", channel: name });
-      });
+      markAsRead(state.channel);
+      renderChannelList();
       renderHistory(packet.history || []);
       state.pinnedMessages.set(state.channel, packet.pinned || []);
       updatePinnedButton();
       renderPoll(state.channel, packet.poll || null);
+      break;
+    case "channel_activity":
+      if (packet.channel && packet.channel !== state.channel) {
+        incrementUnread(packet.channel);
+        renderChannelList();
+      }
       break;
     case "pinned_update":
       state.pinnedMessages.set(packet.channel, packet.pinned || []);
@@ -1049,6 +1133,7 @@ function handlePacket(packet) {
         content: packet.content || "",
         created_at: packet.created_at,
         reactions: {},
+        reply_preview: packet.reply_preview || null,
       });
       messagesEl.appendChild(box);
       messagesEl.scrollTop = messagesEl.scrollHeight;
@@ -1066,7 +1151,7 @@ function handlePacket(packet) {
         const body = box.querySelector(".msg-body");
         if (body) {
           body.dataset.raw = packet.content || "";
-          body.innerHTML = highlightMentions(escapeHtml(packet.content || ""));
+          body.innerHTML = renderMarkdown(highlightMentions(escapeHtml(packet.content || "")));
           if (!body.querySelector(".edited-mark")) {
             const mark = document.createElement("span");
             mark.className = "edited-mark";
@@ -1149,8 +1234,11 @@ sendBtn.addEventListener("click", () => {
   if (!state.isAuthed) return;
   const content = inputEl.value.trim();
   if (!content) return;
-  send({ type: "message", content });
+  const packet = { type: "message", content };
+  if (state.replyingTo) packet.reply_to = state.replyingTo.id;
+  send(packet);
   inputEl.value = "";
+  cancelReply();
 });
 
 inputEl.addEventListener("keydown", (ev) => {
@@ -2035,42 +2123,35 @@ window.openPinnedMessages = function() {
   ]);
 };
 
-// FEATURE 5: Message Threading/Replies (Client-side local threads)
-function replyToMessage(msgId, text) {
-  if (!state.messageThreads.has(msgId)) {
-    state.messageThreads.set(msgId, []);
-  }
-  state.messageThreads.get(msgId).push({
-    author: state.username,
-    content: text,
-    timestamp: Date.now(),
-  });
-  saveMessageThreads();
-  addMessage("System", `Reply added to message thread`, "system");
+// FEATURE 5: Reply to message (server-backed — see reply_to on the "message"
+// packet and store.get_reply_preview()). Clicking Reply on a message shows a
+// banner above the composer; sending includes reply_to and the server
+// resolves + persists the quoted preview.
+function startReply(msgId, author, content) {
+  state.replyingTo = { id: msgId, author, content };
+  renderReplyBanner();
+  inputEl.focus();
 }
 
-function getThreadReplies(msgId) {
-  return state.messageThreads.get(msgId) || [];
+function cancelReply() {
+  state.replyingTo = null;
+  renderReplyBanner();
 }
 
-function saveMessageThreads() {
-  const data = {};
-  for (const [msgId, threads] of state.messageThreads) {
-    data[msgId] = threads;
+function renderReplyBanner() {
+  const banner = $("replyBanner");
+  if (!banner) return;
+  if (!state.replyingTo) {
+    banner.classList.add("hidden");
+    banner.innerHTML = "";
+    return;
   }
-  localStorage.setItem("pychatter.threads", JSON.stringify(data));
-}
-
-function loadMessageThreads() {
-  try {
-    const saved = localStorage.getItem("pychatter.threads");
-    if (saved) {
-      const data = JSON.parse(saved);
-      state.messageThreads = new Map(Object.entries(data));
-    }
-  } catch {
-    state.messageThreads = new Map();
-  }
+  const preview = (state.replyingTo.content || "").slice(0, 80);
+  banner.classList.remove("hidden");
+  banner.innerHTML = `
+    <span class="reply-banner-text">Replying to <strong>${escapeHtml(state.replyingTo.author)}</strong> — ${escapeHtml(preview)}</span>
+    <button type="button" class="reply-banner-cancel" onclick="cancelReply()">✕</button>
+  `;
 }
 
 // FEATURE 6: Rich Text Formatting
@@ -2139,22 +2220,54 @@ function loadMentionHistory() {
   }
 }
 
+// Discord-style channel list: unread channels render bold/white with an
+// unread-count pill, favorited channels get a star, click switches +
+// marks that channel read.
+function renderChannelList(filter = "") {
+  const container = $("channels");
+  if (!container) return;
+  const items = filter ? searchChannels(filter) : state.channels;
+
+  container.innerHTML = "";
+  items.forEach((name) => {
+    const unread = state.unreadCount[name] || 0;
+    const isFavorite = state.favorites.has(name);
+    const li = document.createElement("li");
+    li.className = "channel-row" + (unread > 0 ? " unread" : "");
+    if (name === state.channel) li.classList.add("active");
+    li.innerHTML = `
+      <span class="channel-row-name">${isFavorite ? "⭐ " : ""}${escapeHtml(name)}</span>
+      <span class="channel-row-right">
+        ${unread > 0 ? `<span class="channel-unread-badge">${unread > 99 ? "99+" : unread}</span>` : ""}
+        <button class="channel-favorite-btn${isFavorite ? " active" : ""}" title="${isFavorite ? "Remove from favorites" : "Add to favorites"}" type="button">${isFavorite ? "★" : "☆"}</button>
+      </span>
+    `;
+    li.addEventListener("click", () => {
+      send({ type: "switch_channel", channel: name });
+    });
+    const favBtn = li.querySelector(".channel-favorite-btn");
+    favBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      toggleFavorite(name);
+    });
+    container.appendChild(li);
+  });
+
+  const countEl = $("channelCount");
+  if (countEl) countEl.textContent = state.channels.length;
+}
+
+// Kept as an alias — favorites/search code was written against this name.
+function renderChannels() {
+  renderChannelList($("channelSearch")?.value || "");
+}
+
 // FEATURE 9: Channel Search/Filter
 function filterChannelList(search) {
-  const filtered = searchChannels(search);
-  renderList($("channels"), filtered, state.channel, (name) => {
-    send({ type: "switch_channel", channel: name });
-  });
+  renderChannelList(search);
 }
 
 // FEATURE 10: Enhanced Typing Notifications
-function showTypingUsers() {
-  const typing = Object.keys(state.userTypingStatus).filter(u => u !== state.username);
-  if (typing.length === 0) return "";
-  if (typing.length === 1) return `${typing[0]} is typing...`;
-  return `${typing.join(", ")} are typing...`;
-}
-
 // ─── Modern Modal System ────────────────────────────────────────────────────
 function showModal(title, content, buttons = []) {
   const overlay = $("modalOverlay");
@@ -2314,22 +2427,6 @@ function loadBookmarks() {
 }
 
 // ─── Block System ───────────────────────────────────────────────────────────
-function blockUser(username) {
-  const normalized = username.toLowerCase();
-  if (!state.blockedUsers.includes(normalized)) {
-    state.blockedUsers.push(normalized);
-  }
-  saveBlockedUsers();
-  addMessage("System", `${username} has been blocked`, "system");
-}
-
-function unblockUser(username) {
-  const normalized = username.toLowerCase();
-  state.blockedUsers = state.blockedUsers.filter(u => u !== normalized);
-  saveBlockedUsers();
-  addMessage("System", `${username} has been unblocked`, "system");
-}
-
 function saveBlockedUsers() {
   localStorage.setItem("pychatter.blocked", JSON.stringify(state.blockedUsers));
 }
@@ -2345,31 +2442,6 @@ function loadBlockedUsers() {
 
 function isUserBlocked(username) {
   return state.blockedUsers.includes(username.toLowerCase());
-}
-
-// ─── User Search ────────────────────────────────────────────────────────────
-function filterUsers(searchTerm) {
-  if (!searchTerm) return state.users;
-  return state.users.filter(u => u.toLowerCase().includes(searchTerm.toLowerCase()));
-}
-
-function filterFriends(searchTerm) {
-  if (!searchTerm) return state.friends;
-  return state.friends.filter(u => u.toLowerCase().includes(searchTerm.toLowerCase()));
-}
-
-// ─── Enhanced Settings ───────────────────────────────────────────────────────
-function loadSettings() {
-  try {
-    const saved = localStorage.getItem("pychatter.settings");
-    return saved ? JSON.parse(saved) : {};
-  } catch {
-    return {};
-  }
-}
-
-function saveSettings(settings) {
-  localStorage.setItem("pychatter.settings", JSON.stringify(settings));
 }
 
 // ─── Auto-reconnection ───────────────────────────────────────────────────────
@@ -2441,7 +2513,6 @@ loadBookmarks();
 loadBlockedUsers();
 loadFavorites();
 loadMentionHistory();
-loadMessageThreads();
 requestNotificationPermission();
 
 // Load user preferences
