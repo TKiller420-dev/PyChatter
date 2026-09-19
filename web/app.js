@@ -1256,10 +1256,13 @@ inputEl.addEventListener("input", () => {
   _typingThrottle = setTimeout(() => { _typingThrottle = null; }, 2000);
 });
 
-$("newChannelBtn").addEventListener("click", () => {
+function openNewChannelModal() {
   if (!state.isAuthed) return;
   showPromptModal("📝 New Channel", "Enter channel name:", "handleNewChannel");
-});
+}
+
+$("newChannelBtn").addEventListener("click", openNewChannelModal);
+$("serverRailAddBtn")?.addEventListener("click", openNewChannelModal);
 
 window.handleNewChannel = function(name) {
   send({ type: "switch_channel", channel: name.trim().toLowerCase().replace(/\s+/g, "-") });

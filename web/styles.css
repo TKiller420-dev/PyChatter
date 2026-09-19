@@ -1,17 +1,21 @@
 :root {
-  --primary: #36393f;
-  --secondary: #2f3136;
-  --tertiary: #202225;
-  --quaternary: #292b2f;
-  --quinary: #40444b;
-  --senary: #8e9297;
-  --text: #dcddde;
-  --title: #ffffff;
-  --line: #1f2124;
+  --primary: #313338;
+  --secondary: #2b2d31;
+  --tertiary: #1e1f22;
+  --quaternary: #232428;
+  --quinary: #383a40;
+  --senary: #949ba4;
+  --text: #dbdee1;
+  --title: #f2f3f5;
+  --line: #26272b;
   --brand: #5865f2;
   --brand-2: #7782ff;
-  --success: #3ba55d;
-  --danger: #ed4245;
+  --success: #23a55a;
+  --danger: #f23f42;
+  /* Discord doesn't publicly distribute "gg sans", so this is its own real
+     fallback stack (what actually renders for anyone without the font
+     installed) rather than an unrelated font pretending to be it. */
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
 }
 
 * {
@@ -27,7 +31,7 @@ body {
 body {
   background: var(--primary);
   color: var(--text);
-  font-family: "Barlow", "Segoe UI", sans-serif;
+  font-family: var(--font);
   overflow: hidden;
 }
 
@@ -35,41 +39,55 @@ body {
   display: none !important;
 }
 
-/* Auth */
+/* Custom Discord-style thin scrollbar */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #1a1b1e transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: #1a1b1e;
+  border-radius: 4px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: #030303;
+}
+
+/* Auth — flat, solid, no glassmorphism. Discord's actual login page is a
+   plain dark card centered on a slightly darker flat background. */
 .auth-view {
   position: fixed;
   inset: 0;
   display: grid;
   place-items: center;
-  background: radial-gradient(circle at 20% 20%, #4d59cb55 0%, transparent 40%),
-    radial-gradient(circle at 80% 80%, #2e8eff2f 0%, transparent 35%),
-    linear-gradient(145deg, #1f2330, #171a22);
-  overflow: hidden;
+  background: #1e1f22;
 }
 
 .auth-noise {
-  position: absolute;
-  inset: 0;
-  background-image: linear-gradient(0deg, #ffffff08 1px, transparent 1px),
-    linear-gradient(90deg, #ffffff08 1px, transparent 1px);
-  background-size: 26px 26px;
-  opacity: 0.2;
+  display: none;
 }
 
 .auth-card {
-  width: min(92vw, 430px);
+  width: min(92vw, 480px);
   position: relative;
-  z-index: 1;
-  border: 1px solid #ffffff24;
-  border-radius: 14px;
-  background: #2b2f3ac9;
-  backdrop-filter: blur(9px);
-  box-shadow: 0 22px 60px #0000008c;
-  padding: 24px;
+  background: var(--secondary);
+  border-radius: 4px;
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.24);
+  padding: 32px;
 }
 
 .auth-brand {
-  font-family: "Space Grotesk", sans-serif;
+  font-family: var(--font);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: #cad0ff;
@@ -124,11 +142,11 @@ body {
 }
 
 .auth-form input {
-  border: 1px solid #454a56;
-  border-radius: 8px;
-  background: #1f232b;
+  border: 1px solid #1e1f22;
+  border-radius: 3px;
+  background: var(--tertiary);
   color: var(--text);
-  padding: 11px 12px;
+  padding: 10px 12px;
 }
 
 .auth-form input:focus {
@@ -173,6 +191,7 @@ body {
 }
 
 .server-pill {
+  position: relative;
   width: 48px;
   height: 48px;
   border-radius: 50%;
@@ -180,10 +199,36 @@ body {
   display: grid;
   place-items: center;
   color: #d8d9de;
-  font-family: "Space Grotesk", sans-serif;
+  font-family: var(--font);
   font-weight: 700;
+  font-size: 16px;
   cursor: pointer;
-  transition: border-radius 0.2s, background 0.2s;
+  border: none;
+  transition: border-radius 0.15s ease, background 0.15s ease;
+}
+
+.server-pill::before {
+  content: "";
+  position: absolute;
+  left: -10px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 4px;
+  height: 8px;
+  border-radius: 0 4px 4px 0;
+  background: #ffffff;
+  opacity: 0;
+  transition: height 0.15s ease, opacity 0.15s ease;
+}
+
+.server-pill:hover::before {
+  height: 20px;
+  opacity: 1;
+}
+
+.server-pill.active::before {
+  height: 40px;
+  opacity: 1;
 }
 
 .server-pill.active,
@@ -191,6 +236,25 @@ body {
   border-radius: 16px;
   background: var(--brand);
   color: #ffffff;
+}
+
+.server-pill.add {
+  color: #23a55a;
+  font-size: 20px;
+  font-weight: 400;
+}
+
+.server-pill.add:hover {
+  background: #23a55a;
+  color: #ffffff;
+}
+
+.server-rail-divider {
+  width: 32px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--line);
+  margin: 2px 0 4px;
 }
 
 .channels-pane,
@@ -483,7 +547,7 @@ body {
 .channel-count {
   font-size: 0.65rem;
   color: #72767d;
-  background: #2f3136;
+  background: #2b2d31;
   padding: 2px 6px;
   border-radius: 3px;
 }
@@ -493,7 +557,7 @@ body {
   padding: 6px 8px;
   margin-bottom: 8px;
   border: 1px solid #3a3f47;
-  background: #2f3136;
+  background: #2b2d31;
   color: var(--text);
   border-radius: 4px;
   font-size: 13px;
@@ -502,7 +566,7 @@ body {
 .search-input:focus {
   outline: none;
   border-color: var(--brand);
-  background: #36393f;
+  background: #313338;
 }
 
 .voice-meta {
@@ -686,7 +750,7 @@ body {
 
 .btn-modal.secondary {
   background: transparent;
-  color: #dcddde;
+  color: #dbdee1;
 }
 
 .btn-modal.secondary:hover {
@@ -717,7 +781,7 @@ body {
   padding: 9px 10px;
   border: none;
   background: transparent;
-  color: #dcddde;
+  color: #dbdee1;
   font-size: 14px;
   font-weight: 500;
   text-align: left;
@@ -760,7 +824,7 @@ body {
   height: 22px;
   border: none;
   background: transparent;
-  color: #8e9297;
+  color: #949ba4;
   font-size: 14px;
   line-height: 1;
   border-radius: 4px;
@@ -791,8 +855,8 @@ body {
   height: 44px;
   border-radius: 50%;
   border: none;
-  background: #40444b;
-  color: #dcddde;
+  background: #383a40;
+  color: #dbdee1;
   font-size: 18px;
   cursor: pointer;
   transition: background 0.12s ease, transform 0.1s ease;
@@ -966,7 +1030,7 @@ body {
   border-bottom: 1px solid #25282c;
   color: var(--title);
   font-weight: 700;
-  font-family: "Space Grotesk", sans-serif;
+  font-family: var(--font);
   letter-spacing: 0.01em;
 }
 
@@ -1039,7 +1103,7 @@ body {
   gap: 8px;
   border-radius: 4px;
   padding: 6px 8px;
-  color: #8e9297;
+  color: #949ba4;
   cursor: pointer;
   font-size: 15px;
   font-weight: 500;
@@ -1060,7 +1124,7 @@ body {
 
 .channel-row:hover {
   background: rgba(79, 84, 92, 0.32);
-  color: #dcddde;
+  color: #dbdee1;
 }
 
 .channel-row.active {
@@ -1074,7 +1138,7 @@ body {
 }
 
 .channel-row.unread .channel-row-name::before {
-  color: #dcddde;
+  color: #dbdee1;
 }
 
 .channel-unread-badge {
@@ -1100,7 +1164,7 @@ body {
 .channel-favorite-btn {
   border: none;
   background: transparent;
-  color: #8e9297;
+  color: #949ba4;
   font-size: 14px;
   line-height: 1;
   cursor: pointer;
@@ -1179,7 +1243,7 @@ body {
   height: 22px;
   border: none;
   background: transparent;
-  color: #8e9297;
+  color: #949ba4;
   font-size: 14px;
   cursor: pointer;
   border-radius: 4px;
@@ -1193,7 +1257,7 @@ body {
 }
 
 .member-refresh-btn:hover {
-  color: #dcddde;
+  color: #dbdee1;
   background: rgba(79, 84, 92, 0.32);
 }
 
@@ -1205,7 +1269,7 @@ body {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.02em;
-  color: #8e9297;
+  color: #949ba4;
   cursor: default;
 }
 
@@ -1290,7 +1354,7 @@ body {
   white-space: nowrap;
   font-size: 15px;
   font-weight: 500;
-  color: #dcddde;
+  color: #dbdee1;
 }
 
 .member-row:hover .member-name {
@@ -1397,7 +1461,7 @@ body {
   align-items: center;
   justify-content: space-between;
   padding: 0 14px;
-  background: #36393f;
+  background: #313338;
 }
 
 .channel-headline {
@@ -1606,7 +1670,7 @@ body {
   gap: 8px;
   font-size: 12.5px;
   color: var(--senary);
-  border-bottom: 1px solid #1f2124;
+  border-bottom: 1px solid #26272b;
 }
 
 .reply-banner.hidden {
@@ -1660,7 +1724,7 @@ body {
 }
 
 .reply-author {
-  color: #dcddde;
+  color: #dbdee1;
   font-weight: 600;
 }
 
@@ -1692,7 +1756,7 @@ body {
 .msg-codeblock code {
   font-family: "Consolas", "Courier New", monospace;
   font-size: 0.85em;
-  color: #dcddde;
+  color: #dbdee1;
   white-space: pre;
 }
 
@@ -1708,8 +1772,8 @@ body {
   width: 100%;
   border: 0;
   border-radius: 8px;
-  background: #40444b;
-  color: #dcddde;
+  background: #383a40;
+  color: #dbdee1;
   padding: 12px 14px;
 }
 
@@ -1855,7 +1919,7 @@ body {
   display: none;
   gap: 3px;
   background: #2a2d33;
-  border: 1px solid #40444b;
+  border: 1px solid #383a40;
   border-radius: 7px;
   padding: 2px 4px;
   z-index: 9;
@@ -1920,7 +1984,7 @@ body {
   position: absolute;
   z-index: 100;
   border-radius: 9px;
-  border: 1px solid #40444b;
+  border: 1px solid #383a40;
   background: #2a2d33;
   padding: 6px;
   display: flex;
