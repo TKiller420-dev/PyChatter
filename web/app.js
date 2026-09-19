@@ -2165,33 +2165,6 @@ function renderReplyBanner() {
   `;
 }
 
-// FEATURE 6: Rich Text Formatting
-function formatBold(text) {
-  return `**${text}**`;
-}
-
-function formatItalic(text) {
-  return `*${text}*`;
-}
-
-function formatCode(text) {
-  return `` `${text}` ``;
-}
-
-function formatCodeBlock(text) {
-  return `\`\`\`\n${text}\n\`\`\``;
-}
-
-function formatMessage(text, format = "bold") {
-  switch (format) {
-    case "bold": return formatBold(text);
-    case "italic": return formatItalic(text);
-    case "code": return formatCode(text);
-    case "code-block": return formatCodeBlock(text);
-    default: return text;
-  }
-}
-
 // FEATURE 7: Global User Search
 function searchUsers(query) {
   const term = query.toLowerCase();

@@ -619,8 +619,6 @@
 					</div>
 				</div>
 				<div class="header-controls">
-					<button class="btn btn-secondary btn-sm">🔔</button>
-					<button class="btn btn-secondary btn-sm">⚙️</button>
 					<button class="btn btn-secondary btn-sm" onclick="logout()">Logout</button>
 				</div>
 			</div>
@@ -708,7 +706,7 @@
 								<div class="card-title">Channels</div>
 								<div class="card-subtitle">Manage server channels</div>
 							</div>
-							<button class="btn btn-primary btn-sm">+ New Channel</button>
+							<button class="btn btn-primary btn-sm" onclick="promptCreateChannel()">+ New Channel</button>
 						</div>
 						<table class="table">
 							<thead>
@@ -717,11 +715,10 @@
 									<th>Members</th>
 									<th>Messages</th>
 									<th>Created</th>
-									<th>Actions</th>
 								</tr>
 							</thead>
 							<tbody id="channels-table">
-								<tr><td colspan="5" style="text-align:center;">Loading...</td></tr>
+								<tr><td colspan="4" style="text-align:center;">Loading...</td></tr>
 							</tbody>
 						</table>
 					</div>
@@ -943,14 +940,57 @@
 						<td><span class="status-dot status-${u.isOnline ? 'online' : 'offline'}"></span>${u.isOnline ? 'Online' : 'Offline'}</td>
 						<td>${new Date(u.created * 1000).toLocaleDateString()}</td>
 						<td>
-							<button class="btn btn-secondary btn-sm">Edit</button>
-							<button class="btn btn-danger btn-sm">Remove</button>
+							<button class="btn btn-secondary btn-sm" onclick="promptSetRole('${u.username}')">Set Role</button>
+							<button class="btn btn-danger btn-sm" onclick="promptBanUser('${u.username}')">Ban</button>
 						</td>
 					</tr>
 				`).join('') || '<tr><td colspan="5">No users</td></tr>';
 			} catch (err) {
 				console.error('Error fetching users:', err);
 			}
+		}
+
+		async function promptSetRole(username) {
+			const role = prompt(`Set role for ${username} (member / mod / admin):`, 'member');
+			if (!role || !['member', 'mod', 'admin'].includes(role.trim().toLowerCase())) {
+				if (role !== null) alert('Role must be member, mod, or admin.');
+				return;
+			}
+			const res = await fetch(`${API_BASE}/api/users/role`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ username, role: role.trim().toLowerCase() }),
+			});
+			const data = await res.json();
+			if (data.error) { alert(data.error); return; }
+			fetchUsers();
+		}
+
+		async function promptBanUser(username) {
+			const reason = prompt(`Ban ${username}? Enter a reason (or cancel):`);
+			if (reason === null) return;
+			const res = await fetch(`${API_BASE}/api/users/ban`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ username, reason: reason || 'No reason provided' }),
+			});
+			const data = await res.json();
+			if (data.error) { alert(data.error); return; }
+			alert(data.message || `${username} banned`);
+			fetchUsers();
+		}
+
+		async function promptCreateChannel() {
+			const name = prompt('New channel name:');
+			if (!name) return;
+			const res = await fetch(`${API_BASE}/api/channels/create`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ name }),
+			});
+			const data = await res.json();
+			if (data.error) { alert(data.error); return; }
+			fetchChannels();
 		}
 
 		async function fetchChannels() {
@@ -964,12 +1004,8 @@
 						<td>${c.userCount || 0}</td>
 						<td>${c.messageCount || 0}</td>
 						<td>${new Date(c.created * 1000).toLocaleDateString()}</td>
-						<td>
-							<button class="btn btn-secondary btn-sm">Edit</button>
-							<button class="btn btn-danger btn-sm">Delete</button>
-						</td>
 					</tr>
-				`).join('') || '<tr><td colspan="5">No channels</td></tr>';
+				`).join('') || '<tr><td colspan="4">No channels</td></tr>';
 			} catch (err) {
 				console.error('Error fetching channels:', err);
 			}

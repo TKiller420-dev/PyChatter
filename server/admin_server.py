@@ -117,6 +117,25 @@ class AdminHandler(http.server.SimpleHTTPRequestHandler):
             } for row in rows]
         self._send_json({"channels": channels})
 
+    def _create_channel(self) -> None:
+        content_length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(content_length)
+        try:
+            data = json.loads(body.decode("utf-8")) if body else {}
+        except json.JSONDecodeError:
+            self._send_json({"error": "Invalid JSON"}, 400)
+            return
+
+        name = data.get("name", "").strip().lower().replace(" ", "-")[:32]
+        if not name:
+            self._send_json({"error": "Channel name is required"}, 400)
+            return
+
+        store = AdminHandler._store
+        store.ensure_channel(name)
+        add_log(f"Channel created via admin: #{name}", "success")
+        self._send_json({"success": True, "message": f"Channel #{name} created"})
+
     def _get_audit_logs(self) -> None:
         with sqlite3.connect(DB_PATH) as conn:
             conn.row_factory = sqlite3.Row
@@ -153,7 +172,7 @@ class AdminHandler(http.server.SimpleHTTPRequestHandler):
             } for row in rows]
         self._send_json({"rooms": rooms})
 
-    def _set_user_role(self, new_role: str) -> None:
+    def _set_user_role(self) -> None:
         content_length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(content_length)
 
@@ -164,6 +183,7 @@ class AdminHandler(http.server.SimpleHTTPRequestHandler):
             return
 
         username = data.get("username", "").strip().lower()
+        new_role = data.get("role", "").strip().lower()
         if new_role not in ("member", "mod", "admin"):
             self._send_json({"error": "Invalid role"}, 400)
             return
@@ -363,7 +383,7 @@ class AdminHandler(http.server.SimpleHTTPRequestHandler):
         parsed = urlparse(self.path)
 
         if parsed.path == "/api/users/role":
-            self._set_user_role("member")
+            self._set_user_role()
             return
 
         if parsed.path == "/api/users/ban":
@@ -372,6 +392,10 @@ class AdminHandler(http.server.SimpleHTTPRequestHandler):
 
         if parsed.path == "/api/users/mute":
             self._mute_user()
+            return
+
+        if parsed.path == "/api/channels/create":
+            self._create_channel()
             return
 
         if parsed.path.startswith("/api/messages/"):

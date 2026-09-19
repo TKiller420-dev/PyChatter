@@ -173,11 +173,11 @@ body {
   font-size: 0.88rem;
 }
 
-/* Main layout */
+/* Main layout — Discord's real desktop client column widths */
 .app {
   display: grid;
   height: 100vh;
-  grid-template-columns: 72px 248px minmax(420px, 1fr) 288px;
+  grid-template-columns: 72px 240px minmax(420px, 1fr) 240px;
 }
 
 .server-rail {
