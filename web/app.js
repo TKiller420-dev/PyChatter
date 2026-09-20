@@ -209,7 +209,10 @@ function setAuthenticated(isAuthed) {
 
 function connectSocket() {
   const wsProtocol = location.protocol === "https:" ? "wss" : "ws";
-  const candidates = [`${wsProtocol}://${location.host}/ws`, `${wsProtocol}://${location.hostname}:9011/ws`];
+  const candidates = [
+    `${wsProtocol}://${location.hostname}:9011/ws`,
+    `${wsProtocol}://${location.host}/ws`,
+  ];
 
   const connectAt = (index) => {
     if (index >= candidates.length) {
@@ -2696,7 +2699,10 @@ function isUserBlocked(username) {
 const originalConnectSocket = connectSocket;
 connectSocket = function() {
   const wsProtocol = location.protocol === "https:" ? "wss" : "ws";
-  const candidates = [`${wsProtocol}://${location.host}/ws`, `${wsProtocol}://${location.hostname}:9011/ws`];
+  const candidates = [
+    `${wsProtocol}://${location.hostname}:9011/ws`,
+    `${wsProtocol}://${location.host}/ws`,
+  ];
 
   const connectAt = (index) => {
     if (index >= candidates.length) {
@@ -2727,6 +2733,7 @@ connectSocket = function() {
     });
 
     ws.addEventListener("close", () => {
+      clearTimeout(timeout);
       if (!opened) {
         connectAt(index + 1);
         return;
@@ -2739,7 +2746,9 @@ connectSocket = function() {
     });
 
     ws.addEventListener("error", (event) => {
-      handleConnectionError(event);
+      if (opened) {
+        handleConnectionError(event);
+      }
     });
 
     ws.addEventListener("message", (event) => {
