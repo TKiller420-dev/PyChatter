@@ -1304,6 +1304,11 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  /* Same fix as .member-name (its sibling pattern) already has — without
+     this, a long channel name forces .channel-row, and therefore the
+     whole sidebar column, wider than intended as the window narrows. */
+  flex: 1;
+  min-width: 0;
 }
 
 .channel-row-name::before {
@@ -1933,6 +1938,12 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
   max-width: 420px;
+  /* .msg-reply-quote is a flex row; without this, the browser still sizes
+     this item to its full unwrapped text width for layout purposes even
+     though overflow:hidden clips what's painted — ellipsis truncation
+     needs min-width:0 to actually affect sizing, not just rendering. */
+  flex: 1;
+  min-width: 0;
 }
 
 .msg-inline-code {
@@ -2131,6 +2142,14 @@ body {
 
 .msg-body {
   color: #d1d3d7;
+  /* Message content is arbitrary user text — a long URL or unbroken word
+     has no natural break point, so without this it just keeps its full
+     intrinsic width and pushes past .msg-content regardless of how much
+     min-width:0 exists up the flex chain. min-width:0 lets the *box*
+     shrink; this is what makes the *text inside it* actually wrap. Only
+     shows up once the window is narrow enough for it to matter, which is
+     exactly the "looks fine, then resize breaks it" symptom. */
+  overflow-wrap: anywhere;
 }
 
 .msg-toolbar {
