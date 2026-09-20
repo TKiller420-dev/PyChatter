@@ -7,3 +7,12 @@ __pycache__/
 server/chat.db
 .DS_Store
 Thumbs.db
+
+# Secrets / local credentials — never commit real values here.
+# See deploy/*.env and deploy/turnserver.conf for the checked-in
+# *templates* (placeholder values only); real ones live in
+# /etc/pychatter/*.env and /etc/turnserver.conf on the server.
+.db_view_token
+*.env
+!deploy/*.env
+.env.local
