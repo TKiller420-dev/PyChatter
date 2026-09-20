@@ -481,6 +481,18 @@ async function createPeerConnection(peerUser, mode = "video") {
 
   pc.ontrack = (event) => {
     const [stream] = event.streams;
+    const track = event.track;
+    console.log(
+      `[call] ontrack fired: kind=${track.kind} readyState=${track.readyState} muted=${track.muted} streamTracks=${stream ? stream.getTracks().length : 0}`
+    );
+    // A track can be "muted" at the WebRTC level even once the connection
+    // overall says "connected" — that means no RTP packets have actually
+    // arrived for THIS track yet. mute/unmute firing later tells us
+    // whether real audio data ever showed up, independent of browser
+    // autoplay policy (which blocks playback of a track that HAS data;
+    // this is about whether there's any data at all).
+    track.onunmute = () => console.log(`[call] remote ${track.kind} track UNMUTED (real media is arriving)`);
+    track.onmute = () => console.log(`[call] remote ${track.kind} track MUTED (no media arriving right now)`);
     if (stream) {
       remoteVideo.srcObject = stream;
       playMediaElement(remoteVideo);
@@ -489,19 +501,83 @@ async function createPeerConnection(peerUser, mode = "video") {
 
   pc.onconnectionstatechange = () => {
     const st = pc.connectionState;
+    console.log(`[call] connectionState -> ${st}`);
     if (st === "connected") {
       stopRinging();
       setCallStatus(`In call with ${getPeer()}`);
+      logActiveCandidatePair(pc);
+      startCallDiagnostics(pc);
     } else if (["failed", "closed", "disconnected"].includes(st)) {
       endCall(false);
       setCallStatus("Call ended");
     }
   };
 
+  pc.oniceconnectionstatechange = () => {
+    console.log(`[call] iceConnectionState -> ${pc.iceConnectionState}`);
+  };
+
   const stream = await ensureLocalMedia(mode);
+  console.log(
+    `[call] local media ready: ${stream.getTracks().map((t) => `${t.kind}(enabled=${t.enabled},readyState=${t.readyState})`).join(", ")}`
+  );
   stream.getTracks().forEach((track) => pc.addTrack(track, stream));
   callPanel.classList.remove("hidden");
   return pc;
+}
+
+// Identifies whether the call actually ended up relaying through TURN
+// (candidate type "relay") vs a direct peer-to-peer path ("host"/"srflx").
+// If this never logs "relay" despite TURN being configured, or logs
+// nothing useful, that's a strong signal the TURN server itself isn't
+// being reached/selected — different problem from autoplay blocking.
+async function logActiveCandidatePair(pc) {
+  try {
+    const stats = await pc.getStats();
+    let pair = null;
+    stats.forEach((report) => {
+      if (report.type === "candidate-pair" && report.state === "succeeded" && report.nominated) {
+        pair = report;
+      }
+    });
+    if (!pair) {
+      console.log("[call] no succeeded candidate-pair found in stats");
+      return;
+    }
+    const local = stats.get(pair.localCandidateId);
+    const remote = stats.get(pair.remoteCandidateId);
+    console.log(
+      `[call] active path: local=${local?.candidateType || "?"} remote=${remote?.candidateType || "?"} protocol=${local?.protocol || "?"}`
+    );
+  } catch (err) {
+    console.log("[call] getStats() failed:", err);
+  }
+}
+
+let _callDiagnosticsTimer = null;
+function startCallDiagnostics(pc) {
+  clearInterval(_callDiagnosticsTimer);
+  _callDiagnosticsTimer = setInterval(async () => {
+    if (pc.connectionState !== "connected") {
+      clearInterval(_callDiagnosticsTimer);
+      return;
+    }
+    try {
+      const stats = await pc.getStats();
+      stats.forEach((report) => {
+        if (report.type === "inbound-rtp" && report.kind === "audio") {
+          console.log(
+            `[call] inbound audio: packetsReceived=${report.packetsReceived} bytesReceived=${report.bytesReceived} packetsLost=${report.packetsLost} jitter=${report.jitter?.toFixed?.(3)}`
+          );
+        }
+        if (report.type === "outbound-rtp" && report.kind === "audio") {
+          console.log(`[call] outbound audio: packetsSent=${report.packetsSent} bytesSent=${report.bytesSent}`);
+        }
+      });
+    } catch {
+      // stats collection failing isn't itself the bug we're chasing
+    }
+  }, 3000);
 }
 
 // ─── Ring tones ────────────────────────────────────────────────────────────
@@ -757,6 +833,7 @@ window.declineIncomingCall = function() {
 
 function endCall(sendHangup) {
   stopRinging();
+  clearInterval(_callDiagnosticsTimer);
   _blockedMediaElements.clear();
   updateEnableAudioBanner();
   const peer = getPeer();
