@@ -1084,6 +1084,8 @@ class ChatServer:
                         relay["sdp"] = packet["sdp"]
                     if "candidate" in packet:
                         relay["candidate"] = packet["candidate"]
+                    if "mediaType" in packet:
+                        relay["mediaType"] = packet["mediaType"]
                     await self.send(target_writer, relay)
                     self.store.log_event("rtc_signal", actor=sender, target=target, metadata={"signal_type": signal_type})
 
