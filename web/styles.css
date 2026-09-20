@@ -386,26 +386,20 @@ body {
   background: #747f8d;
 }
 
-/* Status button in the sidebar header — real swatch instead of a text dot */
-.status-selector {
-  width: 16px;
-  height: 16px;
-  padding: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.status-selector .status-swatch {
-  width: 12px;
-  height: 12px;
-}
-
 /* Self avatar in the footer user-card gets the same status-dot treatment
    as member rows */
 .user-avatar-wrap {
   position: relative;
   flex-shrink: 0;
+}
+
+.user-card {
+  cursor: pointer;
+}
+
+.user-card:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
 }
 
 .user-avatar-wrap .status-swatch {
@@ -1213,17 +1207,6 @@ body {
   flex-shrink: 0;
 }
 
-.status-selector {
-  position: relative;
-  font-size: 16px;
-  color: var(--success);
-  transition: all 0.2s;
-}
-
-.status-selector:hover {
-  color: var(--brand);
-}
-
 .pane-title {
   padding: 14px 14px 13px;
   border-bottom: 1px solid #25282c;
@@ -1277,6 +1260,15 @@ body {
   padding: 0;
   display: grid;
   gap: 2px;
+  /* .pane-section (the Channels/Voice sections) is already flex:1 with
+     min-height:0 expecting this list to be the thing that scrolls, but
+     without overflow-y here the <ul> just grows to fit every item,
+     forces the section past its allotted space, and the whole sidebar
+     (which has no scroll of its own) clips content with no way to
+     reach it — matches the same pattern already correctly applied to
+     .dm-list just above this in the stylesheet. */
+  overflow-y: auto;
+  min-height: 0;
 }
 
 .list li {
@@ -2070,6 +2062,7 @@ body {
   width: 40px;
   height: 40px;
   border-radius: 50%;
+  border: 0;
   background: linear-gradient(145deg, #4f5562, #5e6775);
   display: flex;
   align-items: center;
@@ -2080,6 +2073,12 @@ body {
   background-size: cover;
   background-position: center;
   cursor: pointer;
+  padding: 0;
+}
+
+.msg-avatar:hover,
+.msg-author:hover {
+  filter: brightness(1.1);
 }
 
 .msg-hover-ts {
@@ -2105,6 +2104,20 @@ body {
   color: #ffffff;
   font-weight: 700;
   font-size: 0.92rem;
+}
+
+.msg-author {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.msg-author:hover {
+  text-decoration: underline;
 }
 
 .msg.system {
