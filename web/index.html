@@ -155,6 +155,14 @@
           <button id="toggleMicBtn" class="call-control-btn" type="button" title="Mute / Unmute">🎤</button>
           <button id="toggleCamBtn" class="call-control-btn" type="button" title="Camera On / Off">📷</button>
           <button id="hangupBtn" class="call-control-btn danger" type="button" title="End Call">📞</button>
+          <button id="toggleCallDebugBtn" class="call-control-btn" type="button" title="Show call diagnostics">🛠️</button>
+        </div>
+        <div id="callDebugPanel" class="call-debug-panel hidden">
+          <div class="call-debug-header">
+            <span>Call Diagnostics</span>
+            <button id="copyCallDebugBtn" class="call-debug-copy" type="button">Copy</button>
+          </div>
+          <pre id="callDebugLog" class="call-debug-log"></pre>
         </div>
       </section>
 

@@ -462,6 +462,36 @@ $("enableAudioBtn")?.addEventListener("click", () => {
   _blockedMediaElements.forEach((el) => playMediaElement(el));
 });
 
+// Mirrors console.log to an on-page panel too — mobile browsers don't have
+// easily-accessible dev tools, so this is the only practical way to see
+// call diagnostics on a phone. Kept as plain text so it's trivially
+// selectable/copyable, plus an explicit Copy button using the clipboard
+// API where available.
+function logCall(msg) {
+  console.log(msg);
+  const el = $("callDebugLog");
+  if (!el) return;
+  const time = new Date().toLocaleTimeString([], { hour12: false });
+  el.textContent += `[${time}] ${msg}\n`;
+  el.scrollTop = el.scrollHeight;
+}
+
+$("toggleCallDebugBtn")?.addEventListener("click", () => {
+  $("callDebugPanel")?.classList.toggle("hidden");
+});
+
+$("copyCallDebugBtn")?.addEventListener("click", () => {
+  const text = $("callDebugLog")?.textContent || "";
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(
+      () => showSuccess("Copied to clipboard"),
+      () => showError("Couldn't copy — select the text manually")
+    );
+  } else {
+    showError("Clipboard not available — select the text manually");
+  }
+});
+
 async function createPeerConnection(peerUser, mode = "video") {
   const pc = new RTCPeerConnection({
     iceServers: state.rtc.iceServers,
@@ -482,8 +512,8 @@ async function createPeerConnection(peerUser, mode = "video") {
   pc.ontrack = (event) => {
     const [stream] = event.streams;
     const track = event.track;
-    console.log(
-      `[call] ontrack fired: kind=${track.kind} readyState=${track.readyState} muted=${track.muted} streamTracks=${stream ? stream.getTracks().length : 0}`
+    logCall(
+      `ontrack fired: kind=${track.kind} readyState=${track.readyState} muted=${track.muted} streamTracks=${stream ? stream.getTracks().length : 0}`
     );
     // A track can be "muted" at the WebRTC level even once the connection
     // overall says "connected" — that means no RTP packets have actually
@@ -491,8 +521,8 @@ async function createPeerConnection(peerUser, mode = "video") {
     // whether real audio data ever showed up, independent of browser
     // autoplay policy (which blocks playback of a track that HAS data;
     // this is about whether there's any data at all).
-    track.onunmute = () => console.log(`[call] remote ${track.kind} track UNMUTED (real media is arriving)`);
-    track.onmute = () => console.log(`[call] remote ${track.kind} track MUTED (no media arriving right now)`);
+    track.onunmute = () => logCall(`remote ${track.kind} track UNMUTED (real media is arriving)`);
+    track.onmute = () => logCall(`remote ${track.kind} track MUTED (no media arriving right now)`);
     if (stream) {
       remoteVideo.srcObject = stream;
       playMediaElement(remoteVideo);
@@ -501,7 +531,7 @@ async function createPeerConnection(peerUser, mode = "video") {
 
   pc.onconnectionstatechange = () => {
     const st = pc.connectionState;
-    console.log(`[call] connectionState -> ${st}`);
+    logCall(`connectionState -> ${st}`);
     if (st === "connected") {
       stopRinging();
       setCallStatus(`In call with ${getPeer()}`);
@@ -514,12 +544,12 @@ async function createPeerConnection(peerUser, mode = "video") {
   };
 
   pc.oniceconnectionstatechange = () => {
-    console.log(`[call] iceConnectionState -> ${pc.iceConnectionState}`);
+    logCall(`iceConnectionState -> ${pc.iceConnectionState}`);
   };
 
   const stream = await ensureLocalMedia(mode);
-  console.log(
-    `[call] local media ready: ${stream.getTracks().map((t) => `${t.kind}(enabled=${t.enabled},readyState=${t.readyState})`).join(", ")}`
+  logCall(
+    `local media ready: ${stream.getTracks().map((t) => `${t.kind}(enabled=${t.enabled},readyState=${t.readyState})`).join(", ")}`
   );
   stream.getTracks().forEach((track) => pc.addTrack(track, stream));
   callPanel.classList.remove("hidden");
@@ -541,16 +571,16 @@ async function logActiveCandidatePair(pc) {
       }
     });
     if (!pair) {
-      console.log("[call] no succeeded candidate-pair found in stats");
+      logCall("no succeeded candidate-pair found in stats");
       return;
     }
     const local = stats.get(pair.localCandidateId);
     const remote = stats.get(pair.remoteCandidateId);
-    console.log(
-      `[call] active path: local=${local?.candidateType || "?"} remote=${remote?.candidateType || "?"} protocol=${local?.protocol || "?"}`
+    logCall(
+      `active path: local=${local?.candidateType || "?"} remote=${remote?.candidateType || "?"} protocol=${local?.protocol || "?"}`
     );
   } catch (err) {
-    console.log("[call] getStats() failed:", err);
+    logCall(`getStats() failed: ${err}`);
   }
 }
 
@@ -566,12 +596,12 @@ function startCallDiagnostics(pc) {
       const stats = await pc.getStats();
       stats.forEach((report) => {
         if (report.type === "inbound-rtp" && report.kind === "audio") {
-          console.log(
-            `[call] inbound audio: packetsReceived=${report.packetsReceived} bytesReceived=${report.bytesReceived} packetsLost=${report.packetsLost} jitter=${report.jitter?.toFixed?.(3)}`
+          logCall(
+            `inbound audio: packetsReceived=${report.packetsReceived} bytesReceived=${report.bytesReceived} packetsLost=${report.packetsLost} jitter=${report.jitter?.toFixed?.(3)}`
           );
         }
         if (report.type === "outbound-rtp" && report.kind === "audio") {
-          console.log(`[call] outbound audio: packetsSent=${report.packetsSent} bytesSent=${report.bytesSent}`);
+          logCall(`outbound audio: packetsSent=${report.packetsSent} bytesSent=${report.bytesSent}`);
         }
       });
     } catch {

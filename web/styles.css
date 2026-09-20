@@ -1043,6 +1043,61 @@ body {
   padding: 14px 0 4px;
 }
 
+/* On-device diagnostics for the calling flow — desktop dev tools aren't
+   available on mobile, so this mirrors what would otherwise only go to
+   console.log directly into the page, readable/copyable on any device. */
+.call-debug-panel {
+  margin: 10px 12px 4px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #0e0f11;
+}
+
+.call-debug-panel.hidden {
+  display: none;
+}
+
+.call-debug-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--senary);
+}
+
+.call-debug-copy {
+  border: 1px solid #3a3f47;
+  background: var(--tertiary);
+  color: var(--text);
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-size: 0.7rem;
+  cursor: pointer;
+}
+
+.call-debug-copy:hover {
+  background: #3a3f47;
+}
+
+.call-debug-log {
+  margin: 0;
+  padding: 8px 10px;
+  max-height: 220px;
+  overflow-y: auto;
+  font-family: "Consolas", "Courier New", monospace;
+  font-size: 0.72rem;
+  line-height: 1.5;
+  color: #9fe6a0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+}
+
 .call-control-btn {
   width: 44px;
   height: 44px;
