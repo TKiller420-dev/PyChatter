@@ -418,7 +418,31 @@ async function ensureLocalMedia(mode = "video") {
   const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: wantsVideo });
   state.rtc.localStream = stream;
   localVideo.srcObject = stream;
+  playMediaElement(localVideo);
   return stream;
+}
+
+// The `autoplay` HTML attribute alone isn't reliable here: pc.ontrack fires
+// whenever ICE/DTLS negotiation finishes, which is an async network event
+// that happens well after the click that started the call — often outside
+// the browser's "recent user gesture" window autoplay policies require for
+// media with audio. Without an explicit .play() call (and handling when it
+// gets rejected), the call can reach "connected" with real tracks flowing
+// and still be completely silent on both ends, because the <video> element
+// itself never actually started playing.
+function playMediaElement(el) {
+  const attempt = el.play();
+  if (attempt && typeof attempt.catch === "function") {
+    attempt.catch((err) => {
+      console.warn("Autoplay blocked for", el.id, err);
+      showError("Browser blocked call audio — click anywhere on the page to enable it.");
+      const resume = () => {
+        el.play().catch(() => {});
+        document.removeEventListener("click", resume);
+      };
+      document.addEventListener("click", resume, { once: true });
+    });
+  }
 }
 
 async function createPeerConnection(peerUser, mode = "video") {
@@ -442,6 +466,7 @@ async function createPeerConnection(peerUser, mode = "video") {
     const [stream] = event.streams;
     if (stream) {
       remoteVideo.srcObject = stream;
+      playMediaElement(remoteVideo);
     }
   };
 
