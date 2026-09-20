@@ -8,6 +8,55 @@ import time
 from typing import Any
 
 
+ROLE_ORDER = ["owner", "god", "admin", "satan", "lead_developer", "developer", "mod", "member"]
+VALID_ROLES = set(ROLE_ORDER)
+ROLE_RANK = {role: len(ROLE_ORDER) - idx for idx, role in enumerate(ROLE_ORDER)}
+ROLE_ALIASES = {
+    "moderator": "mod",
+    "lead developer": "lead_developer",
+    "lead-developer": "lead_developer",
+    "leaddev": "lead_developer",
+    "lead_dev": "lead_developer",
+    "dev": "developer",
+}
+
+
+def normalize_role(role: str) -> str:
+    cleaned = str(role or "").strip().lower().replace(" ", "_").replace("-", "_")
+    return ROLE_ALIASES.get(cleaned, cleaned)
+
+
+def normalize_roles(roles: str | list[str] | tuple[str, ...] | set[str] | None) -> list[str]:
+    if roles is None:
+        raw: list[str] = []
+    elif isinstance(roles, str):
+        raw = [part for chunk in roles.split(",") for part in chunk.split("|")]
+    else:
+        raw = [str(role) for role in roles]
+    cleaned = {normalize_role(role) for role in raw if normalize_role(role) in VALID_ROLES}
+    if not cleaned:
+        cleaned = {"member"}
+    if "member" in cleaned and len(cleaned) > 1:
+        cleaned.remove("member")
+    return [role for role in ROLE_ORDER if role in cleaned]
+
+
+def roles_to_string(roles: str | list[str] | tuple[str, ...] | set[str] | None) -> str:
+    return ",".join(normalize_roles(roles))
+
+
+def primary_role(roles: str | list[str] | tuple[str, ...] | set[str] | None) -> str:
+    return normalize_roles(roles)[0]
+
+
+def has_role(roles: str | list[str] | tuple[str, ...] | set[str] | None, allowed: set[str]) -> bool:
+    return bool(set(normalize_roles(roles)) & allowed)
+
+
+def role_rank(role: str) -> int:
+    return ROLE_RANK.get(normalize_role(role), 0)
+
+
 class ChatStore:
     def __init__(self, db_path: str) -> None:
         self.conn = sqlite3.connect(db_path, check_same_thread=False)
@@ -297,7 +346,7 @@ class ChatStore:
             cur = self.conn.cursor()
             cur.execute("SELECT COUNT(*) AS n FROM users")
             first_user = int(cur.fetchone()["n"]) == 0
-            role = "admin" if first_user else "member"
+            role = "owner" if first_user else "member"
             salt, digest = self._hash_password(password)
             try:
                 cur.execute(
@@ -338,7 +387,7 @@ class ChatStore:
             )
             self.conn.commit()
 
-            return True, row["role"], ""
+            return True, roles_to_string(row["role"]), ""
 
     def create_remember_token(self, username: str, ttl_days: int = 30) -> str:
         username = username.strip().lower()
@@ -387,7 +436,7 @@ class ChatStore:
                 return False, "", "", "Session expired. Please sign in again."
 
             username = str(row["username"])
-            role = str(row["role"])
+            role = roles_to_string(row["role"])
             cur.execute(
                 "UPDATE remember_tokens SET last_used_at = ? WHERE id = ?",
                 (now, int(row["token_id"])),
@@ -505,7 +554,7 @@ class ChatStore:
             cur = self.conn.cursor()
             cur.execute("SELECT role FROM users WHERE username = ?", (username.strip().lower(),))
             row = cur.fetchone()
-            return row["role"] if row else "member"
+            return roles_to_string(row["role"]) if row else "member"
 
     def get_user_profile(self, username: str) -> dict[str, str]:
         username = username.strip().lower()
@@ -517,11 +566,14 @@ class ChatStore:
             )
             row = cur.fetchone()
             if row is None:
-                return {"avatar_url": "", "name_color": "", "role": "member"}
+                return {"avatar_url": "", "name_color": "", "role": "member", "roles": ["member"], "primary_role": "member"}
+            roles = normalize_roles(row["role"])
             return {
                 "avatar_url": str(row["avatar_url"] or ""),
                 "name_color": str(row["name_color"] or ""),
-                "role": str(row["role"] or "member"),
+                "role": roles_to_string(roles),
+                "roles": roles,
+                "primary_role": primary_role(roles),
             }
 
     def get_user_profiles(self, usernames: list[str]) -> dict[str, dict[str, str]]:
@@ -539,10 +591,13 @@ class ChatStore:
         out: dict[str, dict[str, str]] = {}
         for row in rows:
             uname = str(row["username"])
+            roles = normalize_roles(row["role"])
             out[uname] = {
                 "avatar_url": str(row["avatar_url"] or ""),
                 "name_color": str(row["name_color"] or ""),
-                "role": str(row["role"] or "member"),
+                "role": roles_to_string(roles),
+                "roles": roles,
+                "primary_role": primary_role(roles),
             }
         return out
 
@@ -583,14 +638,39 @@ class ChatStore:
         return True, ""
 
     def set_user_role(self, username: str, role: str) -> bool:
-        if role not in {"member", "mod", "admin"}:
+        return self.set_user_roles(username, [role])
+
+    def set_user_roles(self, username: str, roles: list[str] | str) -> bool:
+        normalized = roles_to_string(roles)
+        if not normalized:
             return False
         with self.lock:
             cur = self.conn.cursor()
-            cur.execute("UPDATE users SET role = ? WHERE username = ?", (role, username.strip().lower()))
+            cur.execute("UPDATE users SET role = ? WHERE username = ?", (normalized, username.strip().lower()))
             updated = cur.rowcount > 0
             self.conn.commit()
             return updated
+
+    def update_user_role(self, username: str, role: str, enabled: bool) -> tuple[bool, list[str]]:
+        role = normalize_role(role)
+        if role not in VALID_ROLES:
+            return False, []
+        username = username.strip().lower()
+        with self.lock:
+            cur = self.conn.cursor()
+            cur.execute("SELECT role FROM users WHERE username = ?", (username,))
+            row = cur.fetchone()
+            if row is None:
+                return False, []
+            roles = set(normalize_roles(row["role"]))
+            if enabled:
+                roles.add(role)
+            else:
+                roles.discard(role)
+            normalized = normalize_roles(roles)
+            cur.execute("UPDATE users SET role = ? WHERE username = ?", (roles_to_string(normalized), username))
+            self.conn.commit()
+            return True, normalized
 
     def change_username(self, old_username: str, new_username: str) -> tuple[bool, str]:
         old_username = old_username.strip().lower()
@@ -844,8 +924,12 @@ class ChatStore:
             profiles = self.get_user_profiles(authors)
             for row in rows:
                 profile = profiles.get(str(row.get("author", "")).strip().lower(), {})
+                roles = normalize_roles(profile.get("role", "member"))
                 row["author_avatar_url"] = profile.get("avatar_url", "")
                 row["author_name_color"] = profile.get("name_color", "")
+                row["author_roles"] = roles
+                row["author_primary_role"] = primary_role(roles)
+                row["satanic"] = "satan" in roles
         if rows:
             reactions = self.get_reactions_bulk([r["id"] for r in rows])
             for row in rows:
@@ -911,7 +995,7 @@ class ChatStore:
                 return False, "", "Message not found."
             if row["deleted"]:
                 return False, "", "Message already deleted."
-            if row["author"] != requester and requester_role not in ("mod", "admin"):
+            if row["author"] != requester and not has_role(requester_role, {"mod", "developer", "lead_developer", "satan", "admin", "god", "owner"}):
                 return False, "", "You can only delete your own messages."
             cur.execute(
                 "UPDATE channel_messages SET deleted = 1, content = '[deleted]' WHERE id = ?",

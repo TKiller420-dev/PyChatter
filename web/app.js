@@ -4,6 +4,7 @@ const state = {
   rememberToken: "",
   attemptedTokenAuth: false,
   role: "member",
+  roles: ["member"],
   channel: "general",
   channels: [],
   users: [],
@@ -265,6 +266,65 @@ function selectedTarget() {
   return state.selectedFriend || state.selectedUser || "";
 }
 
+const ROLE_ORDER = ["owner", "god", "admin", "satan", "lead_developer", "developer", "mod", "member"];
+const ROLE_LABELS = {
+  owner: "Owner",
+  god: "God",
+  admin: "Admin",
+  satan: "Satan",
+  lead_developer: "Lead Developer",
+  developer: "Developer",
+  mod: "Mod",
+  member: "Member",
+};
+const ROLE_GROUP_LABELS = {
+  owner: "Owner",
+  god: "God Mode",
+  admin: "Admins",
+  satan: "Infernal Affairs",
+  lead_developer: "Lead Developers",
+  developer: "Developers",
+  mod: "Moderators",
+  member: "Online",
+};
+const ROLE_MANAGER_ROLES = new Set(["owner", "god", "admin", "lead_developer"]);
+const MODERATION_ROLES = new Set(["owner", "god", "admin", "satan", "lead_developer", "mod"]);
+const MESSAGE_POWER_ROLES = new Set(["owner", "god", "admin", "satan", "lead_developer", "developer", "mod"]);
+
+function normalizeRole(role) {
+  return String(role || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
+}
+
+function normalizeRoles(roles) {
+  const raw = Array.isArray(roles)
+    ? roles
+    : String(roles || "").split(/[,|]/);
+  const cleaned = new Set(raw.map(normalizeRole).filter((role) => ROLE_ORDER.includes(role)));
+  if (cleaned.size === 0) cleaned.add("member");
+  if (cleaned.size > 1) cleaned.delete("member");
+  return ROLE_ORDER.filter((role) => cleaned.has(role));
+}
+
+function primaryRole(roles) {
+  return normalizeRoles(roles)[0] || "member";
+}
+
+function hasAnyRole(roles, allowed) {
+  return normalizeRoles(roles).some((role) => allowed.has(role));
+}
+
+function canManageRoles() {
+  return hasAnyRole(state.roles, ROLE_MANAGER_ROLES);
+}
+
+function canModerate() {
+  return hasAnyRole(state.roles, MODERATION_ROLES);
+}
+
+function canManageMessages() {
+  return hasAnyRole(state.roles, MESSAGE_POWER_ROLES);
+}
+
 function selectUserTarget(name) {
   if (!name) return;
   state.selectedUser = name;
@@ -281,17 +341,24 @@ function mergeProfiles(profiles) {
     state.profiles[String(username).toLowerCase()] = {
       avatar_url: String(profile.avatar_url || ""),
       name_color: String(profile.name_color || ""),
-      role: String(profile.role || "member"),
+      role: String(profile.role || profile.primary_role || "member"),
+      roles: normalizeRoles(profile.roles || profile.role || profile.primary_role),
+      primary_role: primaryRole(profile.roles || profile.role || profile.primary_role),
     };
   });
 }
 
 function profileFor(username) {
-  return state.profiles[String(username || "").toLowerCase()] || { avatar_url: "", name_color: "", role: "member" };
+  return state.profiles[String(username || "").toLowerCase()] || {
+    avatar_url: "",
+    name_color: "",
+    role: "member",
+    roles: ["member"],
+    primary_role: "member",
+  };
 }
 
-const ROLE_GROUP_ORDER = ["admin", "mod", "member"];
-const ROLE_GROUP_LABELS = { admin: "Admins", mod: "Moderators", member: "Online" };
+const ROLE_GROUP_ORDER = ROLE_ORDER;
 
 function applySelfAvatar() {
   if (!selfAvatarEl) return;
@@ -679,9 +746,9 @@ function renderUsers() {
     usersMetaEl.textContent = `${state.users.length} online`;
   }
 
-  const groups = { admin: [], mod: [], member: [] };
+  const groups = Object.fromEntries(ROLE_GROUP_ORDER.map((role) => [role, []]));
   state.users.forEach((name) => {
-    const role = profileFor(name).role || "member";
+    const role = profileFor(name).primary_role || primaryRole(profileFor(name).roles);
     (groups[role] || groups.member).push(name);
   });
 
@@ -727,7 +794,7 @@ function buildMemberRow(name, role, isActive, onSelect) {
       <span class="member-status status-${status}"></span>
     </span>
     <span class="member-name"${nameStyle}>${escapeHtml(name)}</span>
-    ${role !== "member" ? `<span class="member-role-badge role-${role}">${role}</span>` : ""}
+    ${normalizeRoles(profile.roles || role).filter(r => r !== "member").map(r => `<span class="member-role-badge role-${r}">${ROLE_LABELS[r] || r}</span>`).join("")}
     ${isSelf ? "" : `<button class="member-context-btn" title="More" type="button">⋯</button>`}
   `;
   li.addEventListener("click", () => onSelect(name));
@@ -749,12 +816,12 @@ function openMemberContextMenu(name, anchorEl) {
   }
 
   const isBlocked = isUserBlocked(name);
-  const isMod = state.role === "admin" || state.role === "mod";
+  const isMod = canModerate();
   const content = `
     <div class="popout-menu-title">${escapeHtml(name)}</div>
     ${menuRow("💬", "Message", `closePopoutMenu(); openDmComposer('${name}')`)}
     ${menuRow("📜", "DM History", `closePopoutMenu(); openDmHistory('${name}')`)}
-    ${state.role === "admin" ? menuRow("👑", "Set Role", `closePopoutMenu(); openRoleSelector('${name}')`) : ""}
+    ${canManageRoles() ? menuRow("👑", "Set Roles", `closePopoutMenu(); openRoleSelector('${name}')`) : ""}
     <div class="menu-divider"></div>
     ${isBlocked
       ? menuRow("✅", "Unblock User", `closePopoutMenu(); unblockSelectedUser('${name}')`)
@@ -990,7 +1057,7 @@ function buildMsgToolbar(msgId, author, content) {
   });
   bar.appendChild(bookmarkBtn);
 
-  if (state.role === "admin" || state.role === "mod") {
+  if (canManageMessages()) {
     const pinBtn = document.createElement("button");
     const isPinned = getPinnedMessages().includes(msgId);
     pinBtn.textContent = isPinned ? "📌" : "📍";
@@ -1023,7 +1090,7 @@ function buildMsgToolbar(msgId, author, content) {
     bar.appendChild(editBtn);
   }
 
-  if (author === state.username || state.role === "admin" || state.role === "mod") {
+  if (author === state.username || canManageMessages()) {
     const delBtn = document.createElement("button");
     delBtn.textContent = "🗑️";
     delBtn.title = "Delete message";
@@ -1109,6 +1176,7 @@ function buildMessageEl(opts) {
   box.className = "msg"
     + (isSystem ? " system" : "")
     + (isDeleted ? " msg-deleted" : "")
+    + (opts.satanic ? " msg-satanic" : "")
     + (grouped ? " msg-grouped" : "");
   if (opts.id) {
     box.id = `msg-${opts.id}`;
@@ -1201,6 +1269,7 @@ function renderHistory(history) {
       id: msg.id,
       author: msg.author || "?",
       author_name_color: msg.author_name_color || "",
+      satanic: !!msg.satanic,
       content: msg.content || "",
       reactions: msg.reactions || {},
       edited_at: msg.edited_at,
@@ -1241,11 +1310,15 @@ function handlePacket(packet) {
   switch (packet.type) {
     case "auth_ok":
       state.username = packet.username || state.username;
-      state.role = packet.role || "member";
+      state.roles = normalizeRoles(packet.roles || packet.role || "member");
+      state.role = primaryRole(state.roles);
       mergeProfiles({
         [state.username]: {
           avatar_url: packet.avatar_url || "",
           name_color: packet.name_color || "",
+          role: packet.role || state.role,
+          roles: state.roles,
+          primary_role: state.role,
         },
       });
       state.attemptedTokenAuth = false;
@@ -1345,6 +1418,10 @@ function handlePacket(packet) {
       state.dmView = "";
       appView.classList.remove("dm-active");
       chatGlyph.textContent = "#";
+      if (packet.roles || packet.role) {
+        state.roles = normalizeRoles(packet.roles || packet.role);
+        state.role = primaryRole(state.roles);
+      }
       state.channel = packet.channel || "general";
       state.channels = packet.channels || ["general"];
       channelTitle.textContent = `#${state.channel}`;
@@ -1405,6 +1482,7 @@ function handlePacket(packet) {
         id: packet.id,
         author: packet.author || "?",
         author_name_color: packet.author_name_color || "",
+        satanic: !!packet.satanic,
         content: packet.content || "",
         created_at: packet.created_at,
         reactions: {},
@@ -1469,6 +1547,7 @@ function handlePacket(packet) {
           id: packet.id,
           author: packet.sender,
           author_name_color: packet.author_name_color || "",
+          satanic: !!packet.satanic,
           content: packet.content || "",
           created_at: packet.created_at,
         }));
@@ -1490,14 +1569,17 @@ function handlePacket(packet) {
         id: m.id,
         author: m.sender,
         author_name_color: m.author_name_color || "",
+        satanic: !!m.satanic,
         content: m.content || "",
         created_at: m.created_at,
       })));
       messagesEl.scrollTop = messagesEl.scrollHeight;
       break;
     case "role_update":
-      state.role = packet.role || state.role;
-      addMessage("System", `Role updated to ${state.role}`, "system");
+      state.roles = normalizeRoles(packet.roles || packet.role || state.roles);
+      state.role = primaryRole(state.roles);
+      mergeProfiles({ [state.username]: { ...profileFor(state.username), role: state.roles.join(","), roles: state.roles, primary_role: state.role } });
+      addMessage("System", `Roles updated: ${state.roles.map((role) => ROLE_LABELS[role] || role).join(", ")}`, "system");
       break;
     case "username_changed":
       state.username = packet.username || state.username;
@@ -1703,8 +1785,8 @@ window.openDmHistory = function(targetName) {
 
 window.openRoleSelector = function(targetName) {
   targetName = targetName || state.selectedUser;
-  if (state.role !== "admin") {
-    showError("Only admins can set roles");
+  if (!canManageRoles()) {
+    showError("You need a role-management role");
     return;
   }
   if (!targetName) {
@@ -1712,19 +1794,27 @@ window.openRoleSelector = function(targetName) {
     return;
   }
   state.selectedUser = targetName;
-  const content = `<p style="color: var(--text); margin-bottom: 4px;">Select a role for <strong>${escapeHtml(targetName)}</strong>:</p>`;
-  const buttons = [
-    { label: "Member", type: "secondary", onclick: `applyRole('member')` },
-    { label: "Moderator", type: "secondary", onclick: `applyRole('mod')` },
-    { label: "Admin", type: "danger", onclick: `applyRole('admin')` },
-  ];
-  showModal("Set Role", content, buttons);
+  const currentRoles = normalizeRoles(profileFor(targetName).roles || profileFor(targetName).role);
+  const content = `
+    <p style="color: var(--text); margin-bottom: 10px;">Toggle roles for <strong>${escapeHtml(targetName)}</strong>:</p>
+    <div class="role-toggle-list">
+      ${ROLE_ORDER.filter((role) => role !== "member").map((role) => {
+        const enabled = currentRoles.includes(role);
+        return `<button class="role-toggle ${enabled ? "active" : ""} role-${role}" onclick="applyRole('${role}', ${enabled ? "false" : "true"})">
+          <span>${ROLE_LABELS[role]}</span><span>${enabled ? "Remove" : "Add"}</span>
+        </button>`;
+      }).join("")}
+    </div>
+  `;
+  showModal("Set Roles", content, [
+    { label: "Close", type: "secondary", onclick: "closeModal()" },
+  ]);
 };
 
-window.applyRole = function(normalized) {
+window.applyRole = function(normalized, enabled = true) {
   closeModal();
-  send({ type: "promote", username: state.selectedUser.toLowerCase(), role: normalized });
-  showSuccess(`${state.selectedUser} is now ${normalized}`);
+  send({ type: "promote", username: state.selectedUser.toLowerCase(), role: normalized, enabled });
+  showSuccess(`${enabled ? "Adding" : "Removing"} ${ROLE_LABELS[normalized] || normalized} for ${state.selectedUser}`);
 };
 
 $("memberListToggleBtn")?.addEventListener("click", () => {
@@ -1900,7 +1990,7 @@ window.showAccountInfo = function() {
   const info = `
     <div style="color: var(--text); line-height: 2;">
       <strong>Username:</strong> ${state.username}<br>
-      <strong>Role:</strong> <span style="color: var(--brand);">${state.role}</span><br>
+      <strong>Roles:</strong> <span style="color: var(--brand);">${state.roles.map((role) => ROLE_LABELS[role] || role).join(", ")}</span><br>
       <strong>Status:</strong> ${state.userStatus}<br>
       <strong>Channels:</strong> ${state.channels.length}<br>
       <strong>Friends:</strong> ${state.friends.length}
@@ -2472,7 +2562,7 @@ window.openPinnedMessages = function() {
     const box = document.getElementById(`msg-${id}`);
     const author = box?.dataset?.msgAuthor || "?";
     const text = box?.querySelector(".msg-body")?.textContent || "(not loaded — scroll up)";
-    const unpinBtn = (state.role === "admin" || state.role === "mod")
+    const unpinBtn = canManageMessages()
       ? `<button class="btn-modal secondary" style="padding:4px 10px;font-size:12px;" onclick="unpinMessage(${id}); closeModal();">Unpin</button>`
       : "";
     return `<div style="display:flex; justify-content:space-between; align-items:center; gap:12px; padding:8px 0; border-bottom:1px solid #25282c;">

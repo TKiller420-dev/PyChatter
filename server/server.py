@@ -227,6 +227,8 @@ class ChatServer:
                 "type": packet_type,
                 "username": client["username"],
                 "role": client["role"],
+                "roles": normalize_roles(client.get("role", "member")),
+                "primary_role": primary_role(client.get("role", "member")),
                 "channels": sorted(self.channels.keys()),
                 "channel": channel,
                 "history": history,
@@ -282,7 +284,9 @@ class ChatServer:
         self.store.upsert_channel_membership(username, channel)
         session_id = self.store.create_session(username, str(writer.get_extra_info("peername")))
         self.channels[channel].add(writer)
-        self.clients[writer] = {"username": username, "role": role, "session_id": session_id}
+        roles = normalize_roles(role)
+        role = ",".join(roles)
+        self.clients[writer] = {"username": username, "role": role, "roles": roles, "session_id": session_id}
         self.client_channels[writer] = channel
         self.online_users[username] = writer
         saved_status, saved_custom_status = self.store.get_user_status(username)
@@ -296,6 +300,8 @@ class ChatServer:
             "type": "auth_ok",
             "username": username,
             "role": role,
+            "roles": roles,
+            "primary_role": primary_role(roles),
             "avatar_url": profile.get("avatar_url", ""),
             "name_color": profile.get("name_color", ""),
         }
@@ -405,11 +411,15 @@ class ChatServer:
                     created_at = int(time.time())
                     self.store.save_channel_message(msg_id, channel, username, content, reply_to)
                     profile = self.store.get_user_profile(username)
+                    author_roles = normalize_roles(self.clients[writer].get("role", profile.get("role", "member")))
                     packet_out = {
                         "type": "message",
                         "id": msg_id,
                         "channel": channel,
                         "author": username,
+                        "author_roles": author_roles,
+                        "author_primary_role": primary_role(author_roles),
+                        "satanic": "satan" in author_roles,
                         "author_avatar_url": profile.get("avatar_url", ""),
                         "author_name_color": profile.get("name_color", ""),
                         "content": content,
@@ -512,9 +522,8 @@ class ChatServer:
                 elif kind == "moderate_kick":
                     if writer not in self.clients:
                         continue
-                    actor_role = self.clients[writer]["role"]
-                    if actor_role not in {"admin", "mod"}:
-                        await self.send(writer, {"type": "action_error", "message": "Only mods and admins can kick users."})
+                    if not self._has_any_role(writer, MODERATION_ROLES):
+                        await self.send(writer, {"type": "action_error", "message": "You need a moderation role to kick users."})
                         continue
                     target = str(packet.get("username", "")).strip().lower()[:24]
                     target_writer = self.online_users.get(target)
@@ -530,9 +539,8 @@ class ChatServer:
                 elif kind == "moderate_timeout":
                     if writer not in self.clients:
                         continue
-                    actor_role = self.clients[writer]["role"]
-                    if actor_role not in {"admin", "mod"}:
-                        await self.send(writer, {"type": "action_error", "message": "Only mods and admins can time out users."})
+                    if not self._has_any_role(writer, MODERATION_ROLES):
+                        await self.send(writer, {"type": "action_error", "message": "You need a moderation role to time out users."})
                         continue
                     target = str(packet.get("username", "")).strip().lower()[:24]
                     try:
@@ -574,6 +582,7 @@ class ChatServer:
                     created_at = int(time.time())
                     self.store.save_dm(msg_id, sender, recipient, content)
                     profile = self.store.get_user_profile(sender)
+                    author_roles = normalize_roles(self.clients[writer].get("role", profile.get("role", "member")))
                     dm_packet = {
                         "type": "dm",
                         "id": msg_id,
@@ -581,6 +590,9 @@ class ChatServer:
                         "recipient": recipient,
                         "content": content,
                         "created_at": created_at,
+                        "author_roles": author_roles,
+                        "author_primary_role": primary_role(author_roles),
+                        "satanic": "satan" in author_roles,
                         "author_avatar_url": profile.get("avatar_url", ""),
                         "author_name_color": profile.get("name_color", ""),
                     }
@@ -618,8 +630,12 @@ class ChatServer:
                         dm_profiles = self.store.get_user_profiles(sorted(authors))
                         for m in history:
                             p = dm_profiles.get(str(m.get("sender", "")).strip().lower(), {})
+                            roles = normalize_roles(p.get("role", "member"))
                             m["author_avatar_url"] = p.get("avatar_url", "")
                             m["author_name_color"] = p.get("name_color", "")
+                            m["author_roles"] = roles
+                            m["author_primary_role"] = primary_role(roles)
+                            m["satanic"] = "satan" in roles
                     await self.send(
                         writer,
                         {
@@ -632,32 +648,48 @@ class ChatServer:
                 elif kind == "promote":
                     if writer not in self.clients:
                         continue
-                    requester_role = self.clients[writer]["role"]
-                    if requester_role != "admin":
-                        await self.send(writer, {"type": "system", "message": "Only admins can change roles."})
+                    actor_roles = self._roles_for(writer)
+                    if not (set(actor_roles) & ROLE_MANAGER_ROLES):
+                        await self.send(writer, {"type": "system", "message": "You need a role-management role to change roles."})
                         continue
 
                     target = str(packet.get("username", "")).strip().lower()[:24]
-                    new_role = str(packet.get("role", "member")).strip().lower()
-                    if new_role not in {"member", "mod", "admin"}:
-                        await self.send(writer, {"type": "system", "message": "Role must be member, mod, or admin."})
+                    new_role = normalize_role(str(packet.get("role", "member")))
+                    enabled = bool(packet.get("enabled", True))
+                    if new_role not in ROLE_LABELS:
+                        await self.send(writer, {"type": "system", "message": "Unknown role."})
                         continue
 
-                    if not self.store.set_user_role(target, new_role):
+                    target_roles = normalize_roles(self.store.get_user_role(target))
+                    if not self._can_assign_role(actor_roles, target_roles, new_role):
+                        await self.send(writer, {"type": "system", "message": "That role is above your pay grade."})
+                        continue
+
+                    ok, roles = self.store.update_user_role(target, new_role, enabled)
+                    if not ok:
                         await self.send(writer, {"type": "system", "message": "User not found."})
                         continue
+                    new_role_string = ",".join(roles)
 
                     target_writer = self.online_users.get(target)
                     if target_writer and target_writer in self.clients:
-                        self.clients[target_writer]["role"] = new_role
-                        await self.send(target_writer, {"type": "role_update", "role": new_role})
+                        self.clients[target_writer]["role"] = new_role_string
+                        self.clients[target_writer]["roles"] = roles
+                        await self.send(target_writer, {"type": "role_update", "role": new_role_string, "roles": roles, "primary_role": primary_role(roles)})
                     self.store.log_event(
                         "role_changed",
                         actor=self.clients[writer]["username"],
                         target=target,
-                        metadata={"role": new_role},
+                        metadata={"role": new_role, "enabled": enabled, "roles": roles},
                     )
-                    await self.send(writer, {"type": "system", "message": f"Updated {target} to role {new_role}."})
+                    label = ROLE_LABELS.get(new_role, new_role)
+                    await self.send(writer, {"type": "system", "message": f"{'Added' if enabled else 'Removed'} {label} for {target}."})
+                    if new_role == "satan" and enabled:
+                        await self.broadcast(self.client_channels.get(writer, "general"), {
+                            "type": "system",
+                            "message": f"{target} has been handed the Satan role. The thermostat just lost a fight.",
+                        })
+                    await self.broadcast_social_state()
 
                 elif kind == "who":
                     if writer not in self.clients:
@@ -966,9 +998,8 @@ class ChatServer:
                     if writer not in self.clients:
                         continue
                     username = self.clients[writer]["username"]
-                    role = self.clients[writer]["role"]
-                    if role not in {"admin", "mod"}:
-                        await self.send(writer, {"type": "action_error", "message": "Only mods and admins can pin messages."})
+                    if not self._has_any_role(writer, MESSAGE_POWER_ROLES):
+                        await self.send(writer, {"type": "action_error", "message": "You need a message-power role to pin messages."})
                         continue
                     channel = self.client_channels.get(writer, "general")
                     self.pinned_messages[channel] = self.store.get_pins(channel)
@@ -990,9 +1021,8 @@ class ChatServer:
                     if writer not in self.clients:
                         continue
                     username = self.clients[writer]["username"]
-                    role = self.clients[writer]["role"]
-                    if role not in {"admin", "mod"}:
-                        await self.send(writer, {"type": "action_error", "message": "Only mods and admins can unpin messages."})
+                    if not self._has_any_role(writer, MESSAGE_POWER_ROLES):
+                        await self.send(writer, {"type": "action_error", "message": "You need a message-power role to unpin messages."})
                         continue
                     channel = self.client_channels.get(writer, "general")
                     self.pinned_messages[channel] = self.store.get_pins(channel)

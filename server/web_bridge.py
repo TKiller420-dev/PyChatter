@@ -16,7 +16,7 @@ import websockets
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from shared.protocol import decode_packet, encode_packet
-from store import ChatStore
+from store import ChatStore, VALID_ROLES, normalize_role
 
 
 WEB_ROOT = pathlib.Path(__file__).resolve().parent.parent / "web"
@@ -282,7 +282,8 @@ class PyChatterHandler(http.server.SimpleHTTPRequestHandler):
         self._send_json({"rooms": rooms})
 
     def _set_user_role(self, username: str, new_role: str) -> None:
-        if new_role not in ("member", "mod", "admin"):
+        new_role = normalize_role(new_role)
+        if new_role not in VALID_ROLES:
             self._send_json({"error": "Invalid role"}, 400)
             return
 

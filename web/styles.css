@@ -1572,9 +1572,56 @@ body {
   color: #ed4245;
 }
 
+.member-role-badge.role-owner {
+  background: rgba(255, 215, 0, 0.18);
+  color: #ffd166;
+}
+
+.member-role-badge.role-god {
+  background: rgba(88, 101, 242, 0.2);
+  color: #cdd3ff;
+}
+
+.member-role-badge.role-satan {
+  background: rgba(255, 69, 0, 0.2);
+  color: #ff6a3d;
+}
+
+.member-role-badge.role-lead_developer {
+  background: rgba(35, 165, 90, 0.2);
+  color: #57f287;
+}
+
+.member-role-badge.role-developer {
+  background: rgba(0, 168, 252, 0.18);
+  color: #6ad6ff;
+}
+
 .member-role-badge.role-mod {
   background: rgba(250, 166, 26, 0.18);
   color: #faa61a;
+}
+
+.role-toggle-list {
+  display: grid;
+  gap: 8px;
+}
+
+.role-toggle {
+  border: 1px solid #3f4249;
+  border-radius: 6px;
+  background: #2b2d31;
+  color: var(--text);
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+}
+
+.role-toggle.active {
+  border-color: currentColor;
+  background: rgba(88, 101, 242, 0.12);
 }
 
 /* Offline members render dimmed, Discord-style */
@@ -2058,6 +2105,25 @@ body {
 
 .msg:hover {
   background: #32353b;
+}
+
+.msg-satanic {
+  box-shadow: inset 3px 0 0 #ff451f;
+}
+
+.msg-satanic:hover {
+  background: linear-gradient(90deg, rgba(255, 69, 31, 0.12), #32353b 34%);
+}
+
+.msg-satanic .msg-author::after {
+  content: " 666";
+  color: #ff6a3d;
+  font-size: 10px;
+  letter-spacing: 0;
+}
+
+.msg-satanic .msg-body {
+  text-shadow: 0 0 10px rgba(255, 69, 31, 0.28);
 }
 
 .msg-gutter {

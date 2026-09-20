@@ -16,7 +16,7 @@ from urllib.parse import urlparse, parse_qs
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from store import ChatStore
+from store import ChatStore, VALID_ROLES, normalize_role
 
 DB_PATH = pathlib.Path(__file__).resolve().parent / "chat.db"
 ADMIN_HOST = os.environ.get("PYCHATTER_ADMIN_HOST", "127.0.0.1")
@@ -229,8 +229,8 @@ class AdminHandler(http.server.SimpleHTTPRequestHandler):
             return
 
         username = data.get("username", "").strip().lower()
-        new_role = data.get("role", "").strip().lower()
-        if new_role not in ("member", "mod", "admin"):
+        new_role = normalize_role(data.get("role", ""))
+        if new_role not in VALID_ROLES:
             self._send_json({"error": "Invalid role"}, 400)
             return
 
