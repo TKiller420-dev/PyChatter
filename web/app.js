@@ -44,6 +44,7 @@ const state = {
     peer: "",
     iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
   },
+  pendingIncomingCall: null, // {from, mediaType, sdp} — an offer waiting on Accept/Decline
 };
 
 const $ = (id) => document.getElementById(id);
@@ -240,6 +241,7 @@ function connectSocket() {
         return;
       }
       statusText.textContent = "Disconnected";
+      dismissIncomingCall();
       endCall(false);
       setAuthenticated(false);
       syncActionButtons();
@@ -379,6 +381,7 @@ async function createPeerConnection(peerUser, mode = "video") {
   pc.onconnectionstatechange = () => {
     const st = pc.connectionState;
     if (st === "connected") {
+      stopRinging();
       setCallStatus(`In call with ${getPeer()}`);
     } else if (["failed", "closed", "disconnected"].includes(st)) {
       endCall(false);
@@ -390,6 +393,83 @@ async function createPeerConnection(peerUser, mode = "video") {
   stream.getTracks().forEach((track) => pc.addTrack(track, stream));
   callPanel.classList.remove("hidden");
   return pc;
+}
+
+// ─── Ring tones ────────────────────────────────────────────────────────────
+// Synthesized with the Web Audio API rather than shipping audio files —
+// no asset to host, and it gives precise control over the on/off cadence
+// that makes a ringback tone read as "ringback" and a ringtone read as
+// "ringtone" (the timing pattern is what your ear actually recognizes,
+// not the exact waveform).
+let _ringAudioCtx = null;
+let _ringTimer = null;
+
+function _getRingAudioCtx() {
+  if (!_ringAudioCtx || _ringAudioCtx.state === "closed") {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    _ringAudioCtx = new Ctx();
+  }
+  if (_ringAudioCtx.state === "suspended") {
+    _ringAudioCtx.resume().catch(() => {});
+  }
+  return _ringAudioCtx;
+}
+
+function _playToneBurst(ctx, freqs, startAt, durationSec) {
+  const gain = ctx.createGain();
+  gain.gain.setValueAtTime(0, startAt);
+  gain.gain.linearRampToValueAtTime(0.12, startAt + 0.02);
+  gain.gain.setValueAtTime(0.12, startAt + durationSec - 0.03);
+  gain.gain.linearRampToValueAtTime(0, startAt + durationSec);
+  gain.connect(ctx.destination);
+  freqs.forEach((freq) => {
+    const osc = ctx.createOscillator();
+    osc.type = "sine";
+    osc.frequency.value = freq;
+    osc.connect(gain);
+    osc.start(startAt);
+    osc.stop(startAt + durationSec);
+  });
+}
+
+function _startRingLoop(freqs, onSec, offSec) {
+  _stopRingLoop();
+  const ctx = _getRingAudioCtx();
+  const cycle = () => {
+    const now = ctx.currentTime;
+    _playToneBurst(ctx, freqs, now, onSec);
+  };
+  cycle();
+  _ringTimer = setInterval(cycle, (onSec + offSec) * 1000);
+}
+
+function _stopRingLoop() {
+  if (_ringTimer) {
+    clearInterval(_ringTimer);
+    _ringTimer = null;
+  }
+}
+
+// US-style ringback (what the caller hears): two tones, 2s on / 4s off.
+function startRingback() {
+  _startRingLoop([440, 480], 2, 4);
+}
+
+// US-style ringtone (what the callee hears): two short bursts then a pause.
+function startRingtone() {
+  _stopRingLoop();
+  const ctx = _getRingAudioCtx();
+  const cycle = () => {
+    const now = ctx.currentTime;
+    _playToneBurst(ctx, [440, 480], now, 0.4);
+    _playToneBurst(ctx, [440, 480], now + 0.6, 0.4);
+  };
+  cycle();
+  _ringTimer = setInterval(cycle, 2000);
+}
+
+function stopRinging() {
+  _stopRingLoop();
 }
 
 async function startCall(mode = "video") {
@@ -419,6 +499,7 @@ async function startCall(mode = "video") {
       mediaType: mode,
       sdp: pc.localDescription,
     });
+    startRingback();
   } catch (err) {
     let hint = String(err || "unknown error");
     if (err && typeof err === "object" && "name" in err) {
@@ -447,22 +528,20 @@ async function handleRtcSignal(packet) {
 
   try {
     if (signalType === "offer") {
+      // Already in a real, connected call — this is what a phone does when
+      // you're busy: reject the new one automatically instead of silently
+      // dropping the call you're already on.
       if (getConnection()) {
-        endCall(true);
+        send({ type: "rtc_signal", to: from, signalType: "reject" });
+        return;
       }
-      setCallStatus(`Incoming call from ${from}...`);
-      const mode = packet.mediaType === "voice" ? "voice" : "video";
-      const pc = await createPeerConnection(from, mode);
-      await pc.setRemoteDescription(new RTCSessionDescription(packet.sdp));
-      const answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
-      send({
-        type: "rtc_signal",
-        to: from,
-        signalType: "answer",
-        sdp: pc.localDescription,
-      });
-      setCallStatus(`In call with ${from}`);
+      showIncomingCall(from, packet.mediaType === "voice" ? "voice" : "video", packet.sdp);
+      return;
+    }
+
+    if (signalType === "hangup" && state.pendingIncomingCall && state.pendingIncomingCall.from === from) {
+      // Caller cancelled before we answered — stop ringing, dismiss the prompt.
+      dismissIncomingCall();
       return;
     }
 
@@ -471,6 +550,7 @@ async function handleRtcSignal(packet) {
     }
 
     if (signalType === "answer" && packet.sdp) {
+      stopRinging();
       await getConnection().setRemoteDescription(new RTCSessionDescription(packet.sdp));
       setCallStatus(`In call with ${from}`);
     } else if (signalType === "ice" && packet.candidate) {
@@ -478,13 +558,85 @@ async function handleRtcSignal(packet) {
     } else if (signalType === "hangup") {
       endCall(false);
       setCallStatus(`${from} ended the call`);
+    } else if (signalType === "reject") {
+      endCall(false);
+      setCallStatus(`${from} declined the call`);
+      showInfo(`${from} declined the call`);
     }
   } catch (err) {
     addMessage("System", `Call signaling error: ${err}`, "system");
   }
 }
 
+// Real incoming-call consent step: ring, show who's calling and how
+// (voice/video), and do nothing to the connection or the user's mic/camera
+// until they actually click Accept.
+function showIncomingCall(from, mode, sdp) {
+  state.pendingIncomingCall = { from, mediaType: mode, sdp };
+  startRingtone();
+  const label = mode === "voice" ? "Voice call" : "Video call";
+  const content = `
+    <div style="text-align:center; padding: 8px 0;">
+      <div class="msg-avatar" style="width:64px; height:64px; margin:0 auto 12px; font-size:24px;">${escapeHtml((from || "?").slice(0, 1).toUpperCase())}</div>
+      <div style="font-size:18px; font-weight:700; color:var(--title); margin-bottom:4px;">${escapeHtml(from)}</div>
+      <div style="color:var(--senary);">${label} · Incoming</div>
+    </div>
+  `;
+  showModal("Incoming Call", content, [
+    { label: "Decline", type: "danger", onclick: "declineIncomingCall()" },
+    { label: "Accept", type: "primary", onclick: "acceptIncomingCall()" },
+  ]);
+}
+
+function dismissIncomingCall() {
+  stopRinging();
+  state.pendingIncomingCall = null;
+  closeModal();
+}
+
+window.acceptIncomingCall = async function() {
+  const pending = state.pendingIncomingCall;
+  closeModal();
+  stopRinging();
+  state.pendingIncomingCall = null;
+  if (!pending) return;
+
+  try {
+    const pc = await createPeerConnection(pending.from, pending.mediaType);
+    await pc.setRemoteDescription(new RTCSessionDescription(pending.sdp));
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+    send({
+      type: "rtc_signal",
+      to: pending.from,
+      signalType: "answer",
+      sdp: pc.localDescription,
+    });
+    setCallStatus(`In call with ${pending.from}`);
+  } catch (err) {
+    let hint = String(err || "unknown error");
+    if (err && typeof err === "object" && "name" in err) {
+      const name = String(err.name || "");
+      if (name === "NotAllowedError") hint = "Mic/camera permission was denied.";
+      else if (name === "NotFoundError") hint = "No microphone/camera device found.";
+      else if (name === "NotReadableError") hint = "Mic/camera is busy in another app.";
+    }
+    endCall(false);
+    send({ type: "rtc_signal", to: pending.from, signalType: "reject" });
+    addMessage("System", `Could not accept call: ${hint}`, "system");
+  }
+};
+
+window.declineIncomingCall = function() {
+  const pending = state.pendingIncomingCall;
+  dismissIncomingCall();
+  if (pending) {
+    send({ type: "rtc_signal", to: pending.from, signalType: "reject" });
+  }
+};
+
 function endCall(sendHangup) {
+  stopRinging();
   const peer = getPeer();
   if (sendHangup && peer) {
     send({ type: "rtc_signal", to: peer, signalType: "hangup" });
@@ -2739,6 +2891,7 @@ connectSocket = function() {
         return;
       }
       statusText.textContent = "Disconnected";
+      dismissIncomingCall();
       endCall(false);
       setAuthenticated(false);
       syncActionButtons();

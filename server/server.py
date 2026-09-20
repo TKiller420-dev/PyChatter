@@ -10,7 +10,23 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from native.native_bridge import fast_hash
 from shared.protocol import decode_packet, encode_packet
-from store import ChatStore
+from store import ChatStore, normalize_role, normalize_roles, primary_role, role_rank
+
+
+ROLE_LABELS = {
+    "owner": "Owner",
+    "god": "God",
+    "admin": "Admin",
+    "satan": "Satan",
+    "lead_developer": "Lead Developer",
+    "developer": "Developer",
+    "mod": "Mod",
+    "member": "Member",
+}
+FULL_CONTROL_ROLES = {"owner", "god"}
+ROLE_MANAGER_ROLES = FULL_CONTROL_ROLES | {"admin", "lead_developer"}
+MODERATION_ROLES = ROLE_MANAGER_ROLES | {"satan", "mod"}
+MESSAGE_POWER_ROLES = MODERATION_ROLES | {"developer"}
 
 
 class ChatServer:
@@ -42,6 +58,24 @@ class ChatServer:
         self.pinned_messages: Dict[str, list] = defaultdict(list)  # channel -> [msg_ids]
         self.timeouts: Dict[str, float] = {}  # username -> unix ts when timeout expires
         self.polls: Dict[str, dict] = {}  # channel -> active poll {id, question, options, votes, created_by}
+
+    def _roles_for(self, writer: asyncio.StreamWriter) -> list[str]:
+        client = self.clients.get(writer, {})
+        return normalize_roles(client.get("role", "member"))
+
+    def _has_any_role(self, writer: asyncio.StreamWriter, allowed: set[str]) -> bool:
+        return bool(set(self._roles_for(writer)) & allowed)
+
+    def _can_assign_role(self, actor_roles: list[str], target_roles: list[str], role: str) -> bool:
+        if set(actor_roles) & FULL_CONTROL_ROLES:
+            return True
+        if "owner" in target_roles or "god" in target_roles:
+            return False
+        if "admin" in actor_roles:
+            return normalize_role(role) not in FULL_CONTROL_ROLES
+        if "lead_developer" in actor_roles:
+            return role_rank(role) <= role_rank("developer")
+        return False
 
     def _poll_packet(self, channel: str) -> dict:
         poll = self.polls.get(channel)
@@ -1068,7 +1102,7 @@ class ChatServer:
                     sender = self.clients[writer]["username"]
                     target = str(packet.get("to", "")).strip().lower()[:24]
                     signal_type = str(packet.get("signalType", "")).strip().lower()
-                    if not target or signal_type not in {"offer", "answer", "ice", "hangup"}:
+                    if not target or signal_type not in {"offer", "answer", "ice", "hangup", "reject"}:
                         continue
                     target_writer = self.online_users.get(target)
                     if not target_writer or target_writer not in self.clients:
