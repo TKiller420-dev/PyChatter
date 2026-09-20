@@ -595,11 +595,21 @@ async function handleRtcSignal(packet) {
 
   try {
     if (signalType === "offer") {
-      // Already in a real, connected call — this is what a phone does when
-      // you're busy: reject the new one automatically instead of silently
-      // dropping the call you're already on.
-      if (getConnection()) {
-        send({ type: "rtc_signal", to: from, signalType: "reject" });
+      // Already in a real, connected call, OR already ringing for a
+      // different incoming call that hasn't been answered yet — either
+      // way, this is what a phone does when you're busy: auto-reject the
+      // new one rather than silently dropping/overwriting what's already
+      // happening. Without the pendingIncomingCall check, a second caller
+      // would silently replace the first in state.pendingIncomingCall and
+      // the first caller's ringback would just play forever, since nobody
+      // ever sent them a reject/hangup.
+      if (getConnection() || (state.pendingIncomingCall && state.pendingIncomingCall.from !== from)) {
+        send({ type: "rtc_signal", to: from, signalType: "reject", reason: "busy" });
+        return;
+      }
+      if (state.pendingIncomingCall && state.pendingIncomingCall.from === from) {
+        // Same caller re-sent an offer (e.g. their own retry) — ignore,
+        // we're already ringing for them.
         return;
       }
       showIncomingCall(from, packet.mediaType === "voice" ? "voice" : "video", packet.sdp);
@@ -627,8 +637,9 @@ async function handleRtcSignal(packet) {
       setCallStatus(`${from} ended the call`);
     } else if (signalType === "reject") {
       endCall(false);
-      setCallStatus(`${from} declined the call`);
-      showInfo(`${from} declined the call`);
+      const msg = packet.reason === "busy" ? `${from} is on another call` : `${from} declined the call`;
+      setCallStatus(msg);
+      showInfo(msg);
     }
   } catch (err) {
     addMessage("System", `Call signaling error: ${err}`, "system");
@@ -1411,6 +1422,17 @@ function handlePacket(packet) {
       saveMentionHistory();
       break;
     case "action_error":
+      // If we're mid call-setup (ringback playing, or a peer connection
+      // that hasn't reached "connected" yet — e.g. the callee turned out
+      // to be offline, or some other server-side rejection of the offer),
+      // this error is almost certainly about that call attempt. Without
+      // this, the caller's ringback tone and their own already-requested
+      // mic/camera would just run forever with no way to know the call
+      // never had a chance of connecting.
+      if (_ringTimer || (getConnection() && getConnection().connectionState !== "connected")) {
+        endCall(false);
+        setCallStatus(packet.message || "Call failed");
+      }
       addMessage("System", packet.message || "Action failed", "system");
       break;
     case "welcome":
