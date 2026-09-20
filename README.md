@@ -106,8 +106,10 @@ Optional WebRTC/TURN variables:
 ```bash
 PYCHATTER_TURN_URL=turn:your-domain.com:3478
 PYCHATTER_TURN_USERNAME=pychatter
-PYCHATTER_TURN_PASSWORD=change-me
+PYCHATTER_TURN_SECRET=change-me
 ```
+
+`PYCHATTER_TURN_SECRET` is for coturn's `use-auth-secret` / `static-auth-secret` mode. PyChatter will generate time-limited TURN credentials for the browser. Use `PYCHATTER_TURN_PASSWORD` only if coturn is configured with a static user instead.
 
 Or provide a full ICE server list:
 

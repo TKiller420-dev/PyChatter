@@ -1,5 +1,7 @@
 import asyncio
+import base64
 import functools
+import hmac
 import html
 import http.server
 import json
@@ -8,6 +10,7 @@ import pathlib
 import sqlite3
 import sys
 import threading
+import time
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
@@ -44,11 +47,28 @@ def build_ice_servers() -> list[dict[str, Any]]:
     servers: list[dict[str, Any]] = [{"urls": "stun:stun.l.google.com:19302"}]
     turn_url = os.environ.get("PYCHATTER_TURN_URL", "").strip()
     turn_user = os.environ.get("PYCHATTER_TURN_USERNAME", "").strip()
+    turn_secret = os.environ.get("PYCHATTER_TURN_SECRET", "").strip()
     turn_pass = os.environ.get("PYCHATTER_TURN_PASSWORD", "").strip()
-    if turn_url and turn_user and turn_pass:
+    turn_urls: str | list[str] = turn_url
+    if turn_url and turn_url.startswith("turn:") and "transport=" not in turn_url:
+        turn_urls = [f"{turn_url}?transport=udp", f"{turn_url}?transport=tcp"]
+    if turn_url and turn_secret:
+        ttl_seconds = max(60, int(os.environ.get("PYCHATTER_TURN_TTL_SECONDS", "3600")))
+        username = f"{int(time.time()) + ttl_seconds}:{turn_user or 'pychatter'}"
+        credential = base64.b64encode(
+            hmac.digest(turn_secret.encode("utf-8"), username.encode("utf-8"), "sha1")
+        ).decode("ascii")
         servers.append(
             {
-                "urls": turn_url,
+                "urls": turn_urls,
+                "username": username,
+                "credential": credential,
+            }
+        )
+    elif turn_url and turn_user and turn_pass:
+        servers.append(
+            {
+                "urls": turn_urls,
                 "username": turn_user,
                 "credential": turn_pass,
             }

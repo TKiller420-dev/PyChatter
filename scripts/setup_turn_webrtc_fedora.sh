@@ -18,7 +18,6 @@ if [[ -z "$TARGET" ]]; then
   exit 1
 fi
 
-TURN_PASSWORD="${2:-$(openssl rand -hex 16)}"
 TURN_SECRET="$(openssl rand -hex 32)"
 TURN_REALM="$TARGET"
 TURN_EXTERNAL_IP="$TARGET"
@@ -58,7 +57,7 @@ mkdir -p /etc/pychatter
 cat >/etc/pychatter/pychatter-web-turn.env <<EOF
 PYCHATTER_TURN_URL=${TURN_URL}
 PYCHATTER_TURN_USERNAME=pychatter
-PYCHATTER_TURN_PASSWORD=${TURN_PASSWORD}
+PYCHATTER_TURN_SECRET=${TURN_SECRET}
 EOF
 chmod 600 /etc/pychatter/pychatter-web-turn.env
 
@@ -104,8 +103,7 @@ echo
 echo "Setup complete."
 echo "TURN URL: ${TURN_URL}"
 echo "TURN username: pychatter"
-echo "TURN password: ${TURN_PASSWORD}"
-echo "TURN shared secret (for turnserver): ${TURN_SECRET}"
+echo "TURN shared secret: ${TURN_SECRET}"
 echo
 
 echo "Next: make sure your site is HTTPS (required for camera/mic on public origin)."

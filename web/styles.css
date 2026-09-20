@@ -1070,6 +1070,11 @@ body {
   color: var(--senary);
 }
 
+.call-debug-actions {
+  display: flex;
+  gap: 6px;
+}
+
 .call-debug-copy {
   border: 1px solid #3a3f47;
   background: var(--tertiary);

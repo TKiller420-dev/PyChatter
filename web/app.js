@@ -43,7 +43,11 @@ const state = {
     pc: null,
     localStream: null,
     peer: "",
+    callMode: "",
     iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+    pendingIceCandidates: {},
+    voicePeers: {},
+    voicePendingIce: {},
   },
   pendingIncomingCall: null, // {from, mediaType, sdp} — an offer waiting on Accept/Decline
 };
@@ -399,6 +403,212 @@ function getConnection() {
   return state.rtc.pc;
 }
 
+function describeIceCandidate(candidate) {
+  const raw = typeof candidate === "string" ? candidate : (candidate?.candidate || "");
+  const type = raw.match(/\btyp\s+(\w+)/)?.[1] || "?";
+  const protocol = raw.match(/\b(udp|tcp)\b/i)?.[1]?.toLowerCase() || "?";
+  return `type=${type} protocol=${protocol}`;
+}
+
+function queueRemoteIce(from, candidate) {
+  const peer = String(from || "").toLowerCase();
+  if (!peer || !candidate) return;
+  if (!state.rtc.pendingIceCandidates[peer]) {
+    state.rtc.pendingIceCandidates[peer] = [];
+  }
+  state.rtc.pendingIceCandidates[peer].push(candidate);
+  logCall(`queued remote ICE from ${peer}: ${describeIceCandidate(candidate)}`);
+}
+
+async function flushRemoteIce(peer) {
+  const pc = getConnection();
+  const from = String(peer || "").toLowerCase();
+  if (!pc || !from) return;
+  const queued = state.rtc.pendingIceCandidates[from] || [];
+  delete state.rtc.pendingIceCandidates[from];
+  for (const candidate of queued) {
+    try {
+      await pc.addIceCandidate(new RTCIceCandidate(candidate));
+      logCall(`added queued remote ICE from ${from}: ${describeIceCandidate(candidate)}`);
+    } catch (err) {
+      logCall(`failed queued remote ICE from ${from}: ${err}`);
+    }
+  }
+}
+
+function getVoicePeer(peer) {
+  return state.rtc.voicePeers[String(peer || "").toLowerCase()] || null;
+}
+
+function queueVoiceIce(from, candidate) {
+  const peer = String(from || "").toLowerCase();
+  if (!peer || !candidate) return;
+  if (!state.rtc.voicePendingIce[peer]) state.rtc.voicePendingIce[peer] = [];
+  state.rtc.voicePendingIce[peer].push(candidate);
+  logCall(`queued voice-room ICE from ${peer}: ${describeIceCandidate(candidate)}`);
+}
+
+async function flushVoiceIce(peer) {
+  const name = String(peer || "").toLowerCase();
+  const entry = getVoicePeer(name);
+  if (!entry) return;
+  const queued = state.rtc.voicePendingIce[name] || [];
+  delete state.rtc.voicePendingIce[name];
+  for (const candidate of queued) {
+    try {
+      await entry.pc.addIceCandidate(new RTCIceCandidate(candidate));
+      logCall(`added queued voice-room ICE from ${name}: ${describeIceCandidate(candidate)}`);
+    } catch (err) {
+      logCall(`failed queued voice-room ICE from ${name}: ${err}`);
+    }
+  }
+}
+
+function attachVoiceAudio(peer, stream) {
+  const id = `voice-audio-${peer}`;
+  let audio = document.getElementById(id);
+  if (!audio) {
+    audio = document.createElement("audio");
+    audio.id = id;
+    audio.autoplay = true;
+    audio.playsInline = true;
+    audio.dataset.voicePeer = peer;
+    audio.className = "voice-room-audio";
+    callPanel.appendChild(audio);
+  }
+  audio.srcObject = stream;
+  playMediaElement(audio);
+}
+
+async function createVoiceRoomPeer(peer, initiator = false) {
+  const name = String(peer || "").toLowerCase();
+  if (!name || name === state.username) return null;
+  const existing = getVoicePeer(name);
+  if (existing) return existing.pc;
+
+  const room = state.currentVoiceRoom;
+  const pc = new RTCPeerConnection({ iceServers: state.rtc.iceServers });
+  state.rtc.voicePeers[name] = { pc, room };
+
+  pc.onicecandidate = (event) => {
+    if (!event.candidate) {
+      logCall(`voice room ICE gathering complete for ${name}`);
+      return;
+    }
+    logCall(`voice room local ICE for ${name}: ${describeIceCandidate(event.candidate)}`);
+    send({
+      type: "rtc_signal",
+      to: name,
+      signalType: "ice",
+      candidate: event.candidate,
+      context: "voice_room",
+      room,
+    });
+  };
+
+  pc.ontrack = (event) => {
+    const [stream] = event.streams;
+    logCall(`voice room ontrack from ${name}: ${event.track.kind} muted=${event.track.muted}`);
+    event.track.onunmute = () => logCall(`voice room ${name} ${event.track.kind} UNMUTED`);
+    event.track.onmute = () => logCall(`voice room ${name} ${event.track.kind} MUTED`);
+    if (stream) attachVoiceAudio(name, stream);
+  };
+
+  pc.onconnectionstatechange = () => {
+    logCall(`voice room ${name} connectionState -> ${pc.connectionState}`);
+    if (pc.connectionState === "connected") {
+      setCallStatus(`In voice #${state.currentVoiceRoom}`);
+      logActiveCandidatePair(pc);
+    } else if (["failed", "closed"].includes(pc.connectionState)) {
+      logCandidatePairSummary(pc);
+      closeVoiceRoomPeer(name);
+    }
+  };
+
+  pc.oniceconnectionstatechange = () => {
+    logCall(`voice room ${name} iceConnectionState -> ${pc.iceConnectionState}`);
+  };
+
+  const stream = await ensureLocalMedia("voice");
+  stream.getAudioTracks().forEach((track) => pc.addTrack(track, stream));
+  callPanel.classList.remove("hidden");
+  setCallStatus(`In voice #${room}`);
+  syncActionButtons();
+
+  if (initiator) {
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    send({
+      type: "rtc_signal",
+      to: name,
+      signalType: "offer",
+      sdp: pc.localDescription,
+      mediaType: "voice",
+      context: "voice_room",
+      room,
+    });
+  }
+
+  return pc;
+}
+
+function closeVoiceRoomPeer(peer) {
+  const name = String(peer || "").toLowerCase();
+  const entry = getVoicePeer(name);
+  if (entry) {
+    try {
+      entry.pc.onicecandidate = null;
+      entry.pc.ontrack = null;
+      entry.pc.close();
+    } catch {
+      // ignore close errors
+    }
+  }
+  delete state.rtc.voicePeers[name];
+  delete state.rtc.voicePendingIce[name];
+  document.getElementById(`voice-audio-${name}`)?.remove();
+  syncActionButtons();
+}
+
+function closeVoiceRoomPeers(sendHangup = false) {
+  Object.keys(state.rtc.voicePeers).forEach((peer) => {
+    if (sendHangup) {
+      send({ type: "rtc_signal", to: peer, signalType: "hangup", context: "voice_room", room: state.currentVoiceRoom });
+    }
+    closeVoiceRoomPeer(peer);
+  });
+  state.rtc.voicePendingIce = {};
+  if (!getConnection() && state.rtc.localStream) {
+    state.rtc.localStream.getTracks().forEach((t) => t.stop());
+    state.rtc.localStream = null;
+    localVideo.srcObject = null;
+  }
+  syncActionButtons();
+}
+
+async function syncVoiceRoomConnections() {
+  const room = state.currentVoiceRoom;
+  if (!room || !state.username) {
+    closeVoiceRoomPeers(false);
+    return;
+  }
+  const members = (state.voiceState[room] || []).filter((name) => name && name !== state.username);
+  const wanted = new Set(members);
+  Object.keys(state.rtc.voicePeers).forEach((peer) => {
+    if (!wanted.has(peer)) closeVoiceRoomPeer(peer);
+  });
+  for (const peer of members) {
+    const initiator = state.username.localeCompare(peer) < 0;
+    if (!getVoicePeer(peer) && initiator) {
+      try {
+        await createVoiceRoomPeer(peer, true);
+      } catch (err) {
+        logCall(`voice room failed to connect ${peer}: ${err}`);
+      }
+    }
+  }
+}
+
 async function loadRtcConfig() {
   try {
     const res = await fetch("/_rtc_config", { cache: "no-store" });
@@ -474,6 +684,9 @@ function logCall(msg) {
   const time = new Date().toLocaleTimeString([], { hour12: false });
   el.textContent += `[${time}] ${msg}\n`;
   el.scrollTop = el.scrollHeight;
+  if (/failed|disconnected|timeout|blocked|error/i.test(msg)) {
+    $("callDebugPanel")?.classList.remove("hidden");
+  }
 }
 
 $("toggleCallDebugBtn")?.addEventListener("click", () => {
@@ -492,15 +705,26 @@ $("copyCallDebugBtn")?.addEventListener("click", () => {
   }
 });
 
+$("clearCallDebugBtn")?.addEventListener("click", () => {
+  const el = $("callDebugLog");
+  if (el) el.textContent = "";
+});
+
 async function createPeerConnection(peerUser, mode = "video") {
   const pc = new RTCPeerConnection({
     iceServers: state.rtc.iceServers,
   });
   state.rtc.pc = pc;
   state.rtc.peer = peerUser;
+  state.rtc.callMode = mode === "voice" ? "voice" : "video";
 
   pc.onicecandidate = (event) => {
-    if (!event.candidate || !getPeer()) return;
+    if (!event.candidate) {
+      logCall("local ICE gathering complete");
+      return;
+    }
+    logCall(`local ICE candidate: ${describeIceCandidate(event.candidate)}`);
+    if (!getPeer()) return;
     send({
       type: "rtc_signal",
       to: getPeer(),
@@ -533,11 +757,17 @@ async function createPeerConnection(peerUser, mode = "video") {
     const st = pc.connectionState;
     logCall(`connectionState -> ${st}`);
     if (st === "connected") {
+      clearCallDisconnectTimer();
       stopRinging();
       setCallStatus(`In call with ${getPeer()}`);
       logActiveCandidatePair(pc);
       startCallDiagnostics(pc);
-    } else if (["failed", "closed", "disconnected"].includes(st)) {
+    } else if (st === "disconnected") {
+      setCallStatus("Reconnecting call...");
+      scheduleCallDisconnectEnd(pc);
+    } else if (["failed", "closed"].includes(st)) {
+      clearCallDisconnectTimer();
+      if (st === "failed") logCandidatePairSummary(pc);
       endCall(false);
       setCallStatus("Call ended");
     }
@@ -545,6 +775,21 @@ async function createPeerConnection(peerUser, mode = "video") {
 
   pc.oniceconnectionstatechange = () => {
     logCall(`iceConnectionState -> ${pc.iceConnectionState}`);
+    if (pc.iceConnectionState === "connected" || pc.iceConnectionState === "completed") {
+      clearCallDisconnectTimer();
+    } else if (pc.iceConnectionState === "disconnected") {
+      setCallStatus("Reconnecting call...");
+      scheduleCallDisconnectEnd(pc);
+    } else if (pc.iceConnectionState === "failed") {
+      clearCallDisconnectTimer();
+      logCandidatePairSummary(pc);
+      endCall(false);
+      setCallStatus("Call ended");
+    }
+  };
+
+  pc.onicegatheringstatechange = () => {
+    logCall(`iceGatheringState -> ${pc.iceGatheringState}`);
   };
 
   const stream = await ensureLocalMedia(mode);
@@ -553,6 +798,7 @@ async function createPeerConnection(peerUser, mode = "video") {
   );
   stream.getTracks().forEach((track) => pc.addTrack(track, stream));
   callPanel.classList.remove("hidden");
+  syncActionButtons();
   return pc;
 }
 
@@ -584,7 +830,61 @@ async function logActiveCandidatePair(pc) {
   }
 }
 
+async function logCandidatePairSummary(pc) {
+  try {
+    const stats = await pc.getStats();
+    const rows = [];
+    stats.forEach((report) => {
+      if (report.type !== "candidate-pair") return;
+      const local = stats.get(report.localCandidateId);
+      const remote = stats.get(report.remoteCandidateId);
+      rows.push({
+        state: report.state,
+        requestsSent: report.requestsSent || 0,
+        responsesReceived: report.responsesReceived || 0,
+        bytesSent: report.bytesSent || 0,
+        bytesReceived: report.bytesReceived || 0,
+        local: local?.candidateType || "?",
+        remote: remote?.candidateType || "?",
+        protocol: local?.protocol || "?",
+      });
+    });
+    rows
+      .sort((a, b) => (b.responsesReceived - a.responsesReceived) || (b.requestsSent - a.requestsSent))
+      .slice(0, 6)
+      .forEach((row) => {
+        logCall(
+          `pair ${row.state}: local=${row.local} remote=${row.remote} protocol=${row.protocol} requests=${row.requestsSent} responses=${row.responsesReceived} bytes=${row.bytesSent}/${row.bytesReceived}`
+        );
+      });
+    if (!rows.length) logCall("no candidate-pair stats available");
+  } catch (err) {
+    logCall(`candidate pair summary failed: ${err}`);
+  }
+}
+
 let _callDiagnosticsTimer = null;
+let _callDisconnectTimer = null;
+
+function clearCallDisconnectTimer() {
+  if (_callDisconnectTimer) {
+    clearTimeout(_callDisconnectTimer);
+    _callDisconnectTimer = null;
+  }
+}
+
+function scheduleCallDisconnectEnd(pc) {
+  clearCallDisconnectTimer();
+  _callDisconnectTimer = setTimeout(() => {
+    if (pc !== getConnection()) return;
+    if (pc.connectionState === "disconnected" || pc.iceConnectionState === "disconnected") {
+      logCall("call disconnected timeout elapsed; ending call");
+      endCall(false);
+      setCallStatus("Call ended");
+    }
+  }, 15000);
+}
+
 function startCallDiagnostics(pc) {
   clearInterval(_callDiagnosticsTimer);
   _callDiagnosticsTimer = setInterval(async () => {
@@ -741,6 +1041,11 @@ async function handleRtcSignal(packet) {
   const signalType = packet.signalType;
   if (!from || !signalType) return;
 
+  if (packet.context === "voice_room") {
+    await handleVoiceRoomSignal(packet, from, signalType);
+    return;
+  }
+
   try {
     if (signalType === "offer") {
       // Already in a real, connected call, OR already ringing for a
@@ -770,6 +1075,11 @@ async function handleRtcSignal(packet) {
       return;
     }
 
+    if ((!getConnection() || getPeer() !== from) && signalType === "ice" && packet.candidate) {
+      queueRemoteIce(from, packet.candidate);
+      return;
+    }
+
     if (!getConnection() || getPeer() !== from) {
       return;
     }
@@ -777,9 +1087,20 @@ async function handleRtcSignal(packet) {
     if (signalType === "answer" && packet.sdp) {
       stopRinging();
       await getConnection().setRemoteDescription(new RTCSessionDescription(packet.sdp));
+      await flushRemoteIce(from);
       setCallStatus(`In call with ${from}`);
     } else if (signalType === "ice" && packet.candidate) {
-      await getConnection().addIceCandidate(new RTCIceCandidate(packet.candidate));
+      const pc = getConnection();
+      if (!pc || getPeer() !== from || !pc.remoteDescription) {
+        queueRemoteIce(from, packet.candidate);
+        return;
+      }
+      try {
+        await pc.addIceCandidate(new RTCIceCandidate(packet.candidate));
+        logCall(`added remote ICE from ${from}: ${describeIceCandidate(packet.candidate)}`);
+      } catch (err) {
+        logCall(`failed remote ICE from ${from}: ${err}`);
+      }
     } else if (signalType === "hangup") {
       endCall(false);
       setCallStatus(`${from} ended the call`);
@@ -791,6 +1112,56 @@ async function handleRtcSignal(packet) {
     }
   } catch (err) {
     addMessage("System", `Call signaling error: ${err}`, "system");
+  }
+}
+
+async function handleVoiceRoomSignal(packet, from, signalType) {
+  const room = String(packet.room || "").toLowerCase();
+  if (!state.currentVoiceRoom || room !== state.currentVoiceRoom) return;
+
+  if (signalType === "hangup") {
+    closeVoiceRoomPeer(from);
+    return;
+  }
+
+  if (signalType === "ice" && packet.candidate) {
+    const entry = getVoicePeer(from);
+    if (!entry || !entry.pc.remoteDescription) {
+      queueVoiceIce(from, packet.candidate);
+      return;
+    }
+    try {
+      await entry.pc.addIceCandidate(new RTCIceCandidate(packet.candidate));
+      logCall(`added voice-room ICE from ${from}: ${describeIceCandidate(packet.candidate)}`);
+    } catch (err) {
+      logCall(`failed voice-room ICE from ${from}: ${err}`);
+    }
+    return;
+  }
+
+  if (signalType === "offer" && packet.sdp) {
+    const pc = await createVoiceRoomPeer(from, false);
+    await pc.setRemoteDescription(new RTCSessionDescription(packet.sdp));
+    await flushVoiceIce(from);
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+    send({
+      type: "rtc_signal",
+      to: from,
+      signalType: "answer",
+      sdp: pc.localDescription,
+      mediaType: "voice",
+      context: "voice_room",
+      room,
+    });
+    return;
+  }
+
+  if (signalType === "answer" && packet.sdp) {
+    const entry = getVoicePeer(from);
+    if (!entry) return;
+    await entry.pc.setRemoteDescription(new RTCSessionDescription(packet.sdp));
+    await flushVoiceIce(from);
   }
 }
 
@@ -816,6 +1187,9 @@ function showIncomingCall(from, mode, sdp) {
 
 function dismissIncomingCall() {
   stopRinging();
+  if (state.pendingIncomingCall?.from) {
+    delete state.rtc.pendingIceCandidates[state.pendingIncomingCall.from];
+  }
   state.pendingIncomingCall = null;
   closeModal();
 }
@@ -830,6 +1204,7 @@ window.acceptIncomingCall = async function() {
   try {
     const pc = await createPeerConnection(pending.from, pending.mediaType);
     await pc.setRemoteDescription(new RTCSessionDescription(pending.sdp));
+    await flushRemoteIce(pending.from);
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
     send({
@@ -839,6 +1214,7 @@ window.acceptIncomingCall = async function() {
       sdp: pc.localDescription,
     });
     setCallStatus(`In call with ${pending.from}`);
+    syncActionButtons();
   } catch (err) {
     let hint = String(err || "unknown error");
     if (err && typeof err === "object" && "name" in err) {
@@ -864,6 +1240,7 @@ window.declineIncomingCall = function() {
 function endCall(sendHangup) {
   stopRinging();
   clearInterval(_callDiagnosticsTimer);
+  clearCallDisconnectTimer();
   _blockedMediaElements.clear();
   updateEnableAudioBanner();
   const peer = getPeer();
@@ -882,20 +1259,32 @@ function endCall(sendHangup) {
   }
   state.rtc.pc = null;
   state.rtc.peer = "";
+  state.rtc.callMode = "";
+  state.rtc.pendingIceCandidates = {};
 
-  if (state.rtc.localStream) {
+  if (state.rtc.localStream && Object.keys(state.rtc.voicePeers).length === 0) {
     state.rtc.localStream.getTracks().forEach((t) => t.stop());
     state.rtc.localStream = null;
   }
   localVideo.srcObject = null;
-  remoteVideo.srcObject = null;
-  callPanel.classList.add("hidden");
+  if (Object.keys(state.rtc.voicePeers).length === 0) {
+    remoteVideo.srcObject = null;
+  }
+  if (Object.keys(state.rtc.voicePeers).length === 0) {
+    callPanel.classList.add("hidden");
+  } else {
+    setCallStatus(`In voice #${state.currentVoiceRoom}`);
+  }
   syncActionButtons();
 }
 
 function toggleLocalTrack(kind) {
   if (!state.rtc.localStream) return;
   const tracks = kind === "audio" ? state.rtc.localStream.getAudioTracks() : state.rtc.localStream.getVideoTracks();
+  if (kind === "video" && tracks.length === 0) {
+    showInfo("Camera is not active in this voice call.");
+    return;
+  }
   tracks.forEach((t) => {
     t.enabled = !t.enabled;
   });
@@ -1110,13 +1499,16 @@ function setDisabled(id, value) {
 
 function syncActionButtons() {
   const hasTarget = !!selectedTarget();
-  const inCall = !!state.rtc.pc;
+  const inDirectCall = !!state.rtc.pc;
+  const inVoiceRoomCall = Object.keys(state.rtc.voicePeers).length > 0 || !!state.currentVoiceRoom;
+  const inCall = inDirectCall || inVoiceRoomCall;
   const micCamReady = !!state.rtc.localStream;
+  const hasVideoTrack = !!state.rtc.localStream?.getVideoTracks?.().length;
   setDisabled("voiceCallBtn", !state.isAuthed || !hasTarget);
   setDisabled("videoCallBtn", !state.isAuthed || !hasTarget);
   setDisabled("hangupBtn", !state.isAuthed || !inCall);
   setDisabled("toggleMicBtn", !state.isAuthed || !micCamReady);
-  setDisabled("toggleCamBtn", !state.isAuthed || !micCamReady);
+  setDisabled("toggleCamBtn", !state.isAuthed || !micCamReady || !hasVideoTrack);
 }
 
 // ─── HTML helpers ─────────────────────────────────────────────────────────────
@@ -1544,6 +1936,7 @@ function handlePacket(packet) {
       renderUsers();
       applySelfAvatar();
       syncActionButtons();
+      syncVoiceRoomConnections();
       break;
     case "user_state":
       state.userStatus = packet.status || state.userStatus;
@@ -1880,6 +2273,7 @@ window.handleCreateVoiceRoom = function(room) {
 
 $("leaveVoiceRoomBtn").addEventListener("click", () => {
   if (!state.isAuthed) return;
+  closeVoiceRoomPeers(true);
   send({ type: "voice_leave" });
 });
 
@@ -2033,8 +2427,18 @@ $("videoCallBtn").addEventListener("click", async () => {
 
 $("hangupBtn").addEventListener("click", () => {
   if (!state.isAuthed) return;
-  endCall(true);
-  setCallStatus("Call ended");
+  if (state.rtc.pc) {
+    endCall(true);
+    setCallStatus("Call ended");
+  } else if (state.currentVoiceRoom || Object.keys(state.rtc.voicePeers).length > 0) {
+    closeVoiceRoomPeers(true);
+    if (state.currentVoiceRoom) send({ type: "voice_leave" });
+    state.currentVoiceRoom = "";
+    setCallStatus("Left voice channel");
+    callPanel.classList.add("hidden");
+  } else {
+    setCallStatus("Call ended");
+  }
   syncActionButtons();
 });
 

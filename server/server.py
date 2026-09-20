@@ -1138,6 +1138,14 @@ class ChatServer:
                     if not target_writer or target_writer not in self.clients:
                         await self.send(writer, {"type": "action_error", "message": f"{target} is offline."})
                         continue
+                    context = str(packet.get("context", "")).strip().lower()
+                    room = str(packet.get("room", "")).strip().lower()[:32]
+                    if context == "voice_room":
+                        sender_room = self.voice_by_writer.get(writer, "")
+                        target_room = self.voice_by_writer.get(target_writer, "")
+                        if not room or sender_room != room or target_room != room:
+                            await self.send(writer, {"type": "action_error", "message": "Voice room signal target is not in your room."})
+                            continue
 
                     relay = {
                         "type": "rtc_signal",
@@ -1150,6 +1158,10 @@ class ChatServer:
                         relay["candidate"] = packet["candidate"]
                     if "mediaType" in packet:
                         relay["mediaType"] = packet["mediaType"]
+                    if context:
+                        relay["context"] = context
+                    if room:
+                        relay["room"] = room
                     if "reason" in packet:
                         relay["reason"] = packet["reason"]
                     await self.send(target_writer, relay)
