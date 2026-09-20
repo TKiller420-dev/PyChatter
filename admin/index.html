@@ -742,7 +742,7 @@
 						<div class="card-title">Message Deletion</div>
 						<div style="margin-bottom: 16px;">
 							<label class="form-label">Search Messages</label>
-							<input type="text" placeholder="Enter message ID or username..." />
+							<input type="text" id="moderation-search" placeholder="Enter message ID, username, or content..." oninput="debouncedSearchMessages()" />
 						</div>
 						<table class="table">
 							<thead>
@@ -755,7 +755,7 @@
 								</tr>
 							</thead>
 							<tbody id="moderation-table">
-								<tr><td colspan="5" style="text-align:center;">No messages found</td></tr>
+								<tr><td colspan="5" style="text-align:center;">Type above to search messages</td></tr>
 							</tbody>
 						</table>
 					</div>
@@ -776,7 +776,7 @@
 									<th>Room</th>
 									<th>Users</th>
 									<th>Created By</th>
-									<th>Duration</th>
+									<th>Last Activity</th>
 									<th>Status</th>
 								</tr>
 							</thead>
@@ -847,7 +847,7 @@
 							<button class="btn btn-secondary btn-sm" onclick="clearLogs()">Clear</button>
 						</div>
 						<div class="console" id="logs-console">
-							<div class="console-line info">[00:00:00] Server initialized</div>
+							<div class="console-line info">Loading...</div>
 						</div>
 					</div>
 				</div>
@@ -980,6 +980,57 @@
 			fetchUsers();
 		}
 
+		let _moderationSearchTimer = null;
+		function debouncedSearchMessages() {
+			clearTimeout(_moderationSearchTimer);
+			_moderationSearchTimer = setTimeout(searchMessages, 300);
+		}
+
+		function escapeHtml(str) {
+			const d = document.createElement('div');
+			d.textContent = str;
+			return d.innerHTML;
+		}
+
+		async function searchMessages() {
+			const input = document.getElementById('moderation-search');
+			const query = input.value.trim();
+			const tbody = document.getElementById('moderation-table');
+			if (!query) {
+				tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;">Type above to search messages</td></tr>';
+				return;
+			}
+			try {
+				const res = await fetch(`${API_BASE}/api/messages/search?q=${encodeURIComponent(query)}`);
+				const data = await res.json();
+				const messages = data.messages || [];
+				tbody.innerHTML = messages.map(m => `
+					<tr>
+						<td>${escapeHtml((m.content || '').slice(0, 60))}${(m.content || '').length > 60 ? '…' : ''}</td>
+						<td>${escapeHtml(m.author)}</td>
+						<td>#${escapeHtml(m.channel)}</td>
+						<td>${new Date(m.created * 1000).toLocaleString()}</td>
+						<td><button class="btn btn-danger btn-sm" onclick="deleteModeratedMessage(${m.id})">Delete</button></td>
+					</tr>
+				`).join('') || '<tr><td colspan="5" style="text-align:center;">No messages found</td></tr>';
+			} catch (err) {
+				console.error('Error searching messages:', err);
+				tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;">Search failed</td></tr>';
+			}
+		}
+
+		async function deleteModeratedMessage(id) {
+			if (!confirm('Delete this message? This cannot be undone.')) return;
+			try {
+				const res = await fetch(`${API_BASE}/api/messages/${id}/delete`, { method: 'POST' });
+				const data = await res.json();
+				if (data.error) { alert(data.error); return; }
+				searchMessages();
+			} catch (err) {
+				alert('Error deleting message: ' + err.message);
+			}
+		}
+
 		async function promptCreateChannel() {
 			const name = prompt('New channel name:');
 			if (!name) return;
@@ -1019,14 +1070,32 @@
 				tbody.innerHTML = (data.rooms || []).map(r => `
 					<tr>
 						<td><strong>${r.name}</strong></td>
-						<td>0</td>
+						<td>${r.activeUsers || 0}</td>
 						<td>${r.createdBy || '—'}</td>
-						<td>0m</td>
-						<td><span class="badge badge-offline">Inactive</span></td>
+						<td>${r.lastActivity ? new Date(r.lastActivity * 1000).toLocaleString() : 'Never'}</td>
+						<td>${r.activeUsers > 0
+							? '<span class="badge badge-online">Active</span>'
+							: '<span class="badge badge-offline">Inactive</span>'}</td>
 					</tr>
 				`).join('') || '<tr><td colspan="5">No voice rooms</td></tr>';
 			} catch (err) {
 				console.error('Error fetching voice rooms:', err);
+			}
+		}
+
+		async function fetchConsoleLogs() {
+			try {
+				const res = await fetch(`${API_BASE}/api/console/logs`);
+				const data = await res.json();
+				const logsEl = document.getElementById('logs-console');
+				const wasAtBottom = logsEl.scrollTop + logsEl.clientHeight >= logsEl.scrollHeight - 4;
+				logsEl.innerHTML = (data.logs || []).map(l => {
+					const time = new Date(l.timestamp * 1000).toLocaleTimeString();
+					return `<div class="console-line ${l.level || 'info'}">[${time}] ${l.message}</div>`;
+				}).join('') || '<div class="console-line info">No log entries yet</div>';
+				if (wasAtBottom) logsEl.scrollTop = logsEl.scrollHeight;
+			} catch (err) {
+				console.error('Error fetching console logs:', err);
 			}
 		}
 
@@ -1102,9 +1171,14 @@
 			}
 		}
 
-		function clearLogs() {
-			const logsEl = document.getElementById('logs-console');
-			logsEl.innerHTML = '<div class="console-line info">[' + new Date().toLocaleTimeString() + '] Logs cleared</div>';
+		async function clearLogs() {
+			if (!confirm('Clear the server log? This cannot be undone.')) return;
+			try {
+				await fetch(`${API_BASE}/api/console/logs/clear`, { method: 'POST' });
+				fetchConsoleLogs();
+			} catch (err) {
+				alert('Error clearing logs: ' + err.message);
+			}
 		}
 
 		function logout() {
@@ -1120,10 +1194,12 @@
 			fetchChannels();
 			fetchVoiceRooms();
 			fetchAuditLogs();
+			fetchConsoleLogs();
 			checkServerStatus();
 
 			setInterval(fetchStats, 10000);
 			setInterval(fetchAuditLogs, 5000);
+			setInterval(fetchConsoleLogs, 5000);
 			setInterval(checkServerStatus, 30000);
 		});
 	</script>

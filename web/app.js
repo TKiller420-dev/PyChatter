@@ -56,6 +56,7 @@ const sendBtn = $("sendBtn");
 const statusText = $("statusText");
 const channelTitle = $("channelTitle");
 const channelMeta = $("channelMeta");
+const chatGlyph = $("chatGlyph");
 const authForm = $("authForm");
 const authView = $("authView");
 const appView = $("appView");
@@ -81,17 +82,21 @@ const usersMetaEl = $("usersMeta");
 const friendsMetaEl = $("friendsMeta");
 const requestsMetaEl = $("requestsMeta");
 
-function renderDmList() {
+function renderDmList(filter = "") {
   if (!dmListEl) return;
   dmListEl.innerHTML = "";
-  if (!state.dmPartners.length) {
+  const query = String(filter || "").trim().toLowerCase();
+  const items = query
+    ? Array.from(new Set([...state.users, ...state.friends])).filter((name) => name !== state.username && name.toLowerCase().includes(query)).map((name) => ({ username: name, unread: 0 }))
+    : state.dmPartners.filter((partner) => (partner.username || partner) !== state.username);
+  if (!items.length) {
     const empty = document.createElement("li");
     empty.className = "dm-empty";
-    empty.textContent = "No conversations yet";
+    empty.textContent = query ? "No people found" : "No conversations yet";
     dmListEl.appendChild(empty);
     return;
   }
-  state.dmPartners.forEach((partner) => {
+  items.forEach((partner) => {
     const name = partner.username || partner;
     const profile = profileFor(name);
     const initial = escapeHtml((name || "?").slice(0, 1).toUpperCase());
@@ -114,6 +119,8 @@ function openDmConversation(name) {
   state.selectedUser = peer;
   state.selectedFriend = state.friends.includes(peer) ? peer : "";
   state.dmUnread[peer] = 0;
+  appView.classList.add("dm-active");
+  chatGlyph.textContent = "@";
   channelTitle.textContent = `@${peer}`;
   channelMeta.textContent = "Direct message";
   inputEl.placeholder = `Message @${peer}`;
@@ -1153,6 +1160,8 @@ function handlePacket(packet) {
     case "welcome":
     case "channel_switched":
       state.dmView = "";
+      appView.classList.remove("dm-active");
+      chatGlyph.textContent = "#";
       state.channel = packet.channel || "general";
       state.channels = packet.channels || ["general"];
       channelTitle.textContent = `#${state.channel}`;
@@ -1465,9 +1474,24 @@ window.openDmByName = function(name) {
   openDmConversation(peer);
 };
 
-$('newDmBtn')?.addEventListener('click', () => {
-  showPromptModal("New direct message", "Enter a username:", "openDmByName");
-});
+function toggleDmFinder() {
+  const wrap = $("dmSearchWrap");
+  const input = $("dmSearchInput");
+  if (!wrap || !input) return;
+  const opening = wrap.classList.contains("hidden");
+  wrap.classList.toggle("hidden", !opening);
+  if (opening) {
+    input.value = "";
+    renderDmList();
+    input.focus();
+  } else {
+    renderDmList();
+  }
+}
+
+$("newDmBtn")?.addEventListener("click", toggleDmFinder);
+$("dmFinderBtn")?.addEventListener("click", toggleDmFinder);
+$("dmSearchInput")?.addEventListener("input", (event) => renderDmList(event.target.value));
 
 window.openChangeUsername = function() {
   if (!state.isAuthed) return;
@@ -1744,7 +1768,11 @@ if (messageSearch) {
     if (e.key !== "Enter") return;
     const query = e.target.value.trim();
     if (!query) return;
-    send({ type: "search_messages", channel: state.channel, query });
+    send({
+      type: "search_messages",
+      ...(state.dmView ? { with: state.dmView } : { channel: state.channel }),
+      query,
+    });
   });
 }
 
@@ -1827,12 +1855,12 @@ window.handleSearchResults = function(packet) {
   }
   const rows = results.map((m) => `
     <div style="padding:8px 0; border-bottom:1px solid #25282c;">
-      <strong>${escapeHtml(m.author)}</strong>
+      <strong>${escapeHtml(m.author || m.sender || "?")}</strong>
       <span style="color:var(--senary); font-size:12px;"> ${new Date(m.created_at * 1000).toLocaleString()}</span>
       <br>${escapeHtml(m.content)}
     </div>
   `).join("");
-  showModal(`🔎 "${packet.query}" in #${packet.channel}`, rows, [
+  showModal(`🔎 "${packet.query}" ${packet.scope === "dm" ? `with @${packet.with}` : `in #${packet.channel}`}`, rows, [
     { label: "Close", type: "primary", onclick: "closeModal()" },
   ]);
 };

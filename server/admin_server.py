@@ -12,7 +12,7 @@ import threading
 import time
 from datetime import datetime
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -117,6 +117,49 @@ class AdminHandler(http.server.SimpleHTTPRequestHandler):
             } for row in rows]
         self._send_json({"channels": channels})
 
+    def _search_messages(self, query: str) -> None:
+        query = query.strip()
+        if not query:
+            self._send_json({"messages": []})
+            return
+
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            like = "%" + query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+            # Message ID lookup only makes sense if the query is numeric —
+            # a non-numeric "id = ?" would just never match, which is fine,
+            # but we skip the cast attempt entirely to avoid a wasted branch.
+            if query.isdigit():
+                rows = cursor.execute(
+                    """
+                    SELECT id, channel, author, content, created_at
+                    FROM channel_messages
+                    WHERE deleted = 0 AND (id = ? OR author LIKE ? ESCAPE '\\' OR content LIKE ? ESCAPE '\\')
+                    ORDER BY created_at DESC LIMIT 50
+                    """,
+                    (int(query), like, like),
+                ).fetchall()
+            else:
+                rows = cursor.execute(
+                    """
+                    SELECT id, channel, author, content, created_at
+                    FROM channel_messages
+                    WHERE deleted = 0 AND (author LIKE ? ESCAPE '\\' OR content LIKE ? ESCAPE '\\')
+                    ORDER BY created_at DESC LIMIT 50
+                    """,
+                    (like, like),
+                ).fetchall()
+
+            messages = [{
+                "id": row["id"],
+                "channel": row["channel"],
+                "author": row["author"],
+                "content": row["content"],
+                "created": row["created_at"],
+            } for row in rows]
+        self._send_json({"messages": messages})
+
     def _create_channel(self) -> None:
         content_length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(content_length)
@@ -161,7 +204,8 @@ class AdminHandler(http.server.SimpleHTTPRequestHandler):
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             rows = cursor.execute("""
-                SELECT id, name, created_by, created_at FROM voice_rooms ORDER BY name ASC
+                SELECT id, name, created_by, created_at, active_users, last_activity_at
+                FROM voice_rooms ORDER BY active_users DESC, name ASC
             """).fetchall()
 
             rooms = [{
@@ -169,6 +213,8 @@ class AdminHandler(http.server.SimpleHTTPRequestHandler):
                 "name": row["name"],
                 "createdBy": row["created_by"],
                 "created": row["created_at"],
+                "activeUsers": row["active_users"] or 0,
+                "lastActivity": row["last_activity_at"],
             } for row in rows]
         self._send_json({"rooms": rooms})
 
@@ -246,6 +292,13 @@ class AdminHandler(http.server.SimpleHTTPRequestHandler):
     def _get_console_logs(self) -> None:
         with console_lock:
             self._send_json({"logs": console_logs[-100:]})
+
+    def _clear_console_logs(self) -> None:
+        global console_logs
+        with console_lock:
+            console_logs = []
+        add_log("Console log cleared by admin", "info")
+        self._send_json({"success": True})
 
     # server.py and web_bridge.py both run as real systemd units
     # (pychatter-server.service / pychatter-web.service, User=pychatter,
@@ -376,6 +429,10 @@ class AdminHandler(http.server.SimpleHTTPRequestHandler):
         if parsed.path == "/api/console/logs":
             self._get_console_logs()
             return
+        if parsed.path == "/api/messages/search":
+            query = parse_qs(parsed.query).get("q", [""])[0]
+            self._search_messages(query)
+            return
 
         super().do_GET()
 
@@ -396,6 +453,10 @@ class AdminHandler(http.server.SimpleHTTPRequestHandler):
 
         if parsed.path == "/api/channels/create":
             self._create_channel()
+            return
+
+        if parsed.path == "/api/console/logs/clear":
+            self._clear_console_logs()
             return
 
         if parsed.path.startswith("/api/messages/"):

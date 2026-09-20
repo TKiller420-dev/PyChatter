@@ -191,6 +191,16 @@ class ChatStore:
             if "reply_to" not in cm_cols:
                 cur.execute("ALTER TABLE channel_messages ADD COLUMN reply_to INTEGER")
 
+            # v3 migration: live voice-room occupancy, written by the chat
+            # server process and read by the (separate-process) admin
+            # dashboard — the DB is the only channel between them.
+            cur.execute("PRAGMA table_info(voice_rooms)")
+            vr_cols = {row[1] for row in cur.fetchall()}
+            if "active_users" not in vr_cols:
+                cur.execute("ALTER TABLE voice_rooms ADD COLUMN active_users INTEGER NOT NULL DEFAULT 0")
+            if "last_activity_at" not in vr_cols:
+                cur.execute("ALTER TABLE voice_rooms ADD COLUMN last_activity_at INTEGER")
+
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS message_reactions (
@@ -989,6 +999,22 @@ class ChatStore:
         rows.reverse()
         return rows
 
+    def search_dm_messages(self, user_a: str, user_b: str, query: str, limit: int = 30) -> list[dict[str, Any]]:
+        query = query.strip()
+        if not query:
+            return []
+        pattern = "%" + query.replace("%", "\\%").replace("_", "\\_") + "%"
+        with self.lock:
+            rows = self.conn.execute(
+                "SELECT id, sender, recipient, content, created_at FROM direct_messages "
+                "WHERE ((sender = ? AND recipient = ?) OR (sender = ? AND recipient = ?)) "
+                "AND content LIKE ? ESCAPE '\\' ORDER BY created_at DESC LIMIT ?",
+                (user_a, user_b, user_b, user_a, pattern, limit),
+            ).fetchall()
+        result = [dict(row) for row in rows]
+        result.reverse()
+        return result
+
     def list_dm_partners(self, username: str, limit: int = 30) -> list[dict[str, Any]]:
         username = username.strip().lower()
         with self.lock:
@@ -999,7 +1025,7 @@ class ChatStore:
                     CASE WHEN sender = ? THEN recipient ELSE sender END AS partner,
                     MAX(created_at) AS last_at
                 FROM direct_messages
-                WHERE sender = ? OR recipient = ?
+                WHERE (sender = ? OR recipient = ?) AND sender != recipient
                 GROUP BY partner
                 ORDER BY last_at DESC
                 LIMIT ?
@@ -1181,3 +1207,18 @@ class ChatStore:
             cur = self.conn.cursor()
             cur.execute("SELECT name FROM voice_rooms ORDER BY name ASC")
             return [str(row["name"]) for row in cur.fetchall()]
+
+    def set_voice_room_occupancy(self, name: str, active_users: int) -> None:
+        """Called by the chat server (server.py) whenever someone joins or
+        leaves a voice room, so the separate admin_server.py process can
+        report real live occupancy instead of a hardcoded value."""
+        room = name.strip().lower()[:32]
+        if not room:
+            return
+        with self.lock:
+            cur = self.conn.cursor()
+            cur.execute(
+                "UPDATE voice_rooms SET active_users = ?, last_activity_at = ? WHERE name = ?",
+                (max(0, active_users), int(time.time()), room),
+            )
+            self.conn.commit()

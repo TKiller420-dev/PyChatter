@@ -512,10 +512,50 @@ body {
 }
 
 .dm-section {
-  padding: 10px 10px 4px;
+  padding: 10px 8px 6px;
   flex: 0 0 auto;
   min-height: 0;
   border-bottom: 1px solid #25282c;
+}
+
+.dm-finder {
+  width: 100%;
+  border: 0;
+  border-radius: 4px;
+  background: #1e1f22;
+  color: #949ba4;
+  text-align: left;
+  padding: 7px 9px;
+  margin: 3px 0 6px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.dm-finder:hover {
+  color: #dbdee1;
+  background: #111214;
+}
+
+.dm-search-wrap {
+  margin: 3px 0 6px;
+}
+
+.dm-search-input {
+  width: 100%;
+  border: 1px solid #111214;
+  border-radius: 4px;
+  background: #1e1f22;
+  color: var(--text);
+  padding: 7px 9px;
+  font: inherit;
+  font-size: 12px;
+}
+
+.dm-search-input:focus {
+  outline: none;
+  border-color: var(--brand);
+  background: #111214;
 }
 
 .dm-section .section-header {
@@ -570,6 +610,55 @@ body {
   cursor: default !important;
   font-size: 12px;
   padding: 7px 8px !important;
+}
+
+.dm-row .identity-avatar {
+  width: 32px;
+  height: 32px;
+}
+
+.dm-row.active .identity-avatar,
+.dm-row:hover .identity-avatar {
+  box-shadow: 0 0 0 2px rgba(88, 101, 242, 0.45);
+}
+
+.dm-row.active {
+  box-shadow: inset 3px 0 0 var(--brand);
+}
+
+.app.dm-active #pinnedMessagesBtn,
+.app.dm-active #pollBtn {
+  display: none;
+}
+
+/* Discord never shows a call button in a text channel — voice/video calls
+   only exist in DMs (or by joining an actual voice channel, which this app
+   handles separately via the Voice section). Hide them, and their divider,
+   outside DM view instead of just disabling them. */
+.app:not(.dm-active) #voiceCallBtn,
+.app:not(.dm-active) #videoCallBtn,
+.app:not(.dm-active) .top-actions-divider {
+  display: none;
+}
+
+.app.dm-active .chat-topbar .hash {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--brand);
+  color: #fff;
+  font-size: 13px;
+}
+
+.app.dm-active .chat-title {
+  font-size: 16px;
+}
+
+.app.dm-active .chat-meta::before {
+  content: "Direct message · ";
+  color: #72767d;
 }
 
 .quick-action-btn {

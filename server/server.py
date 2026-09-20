@@ -27,6 +27,10 @@ class ChatServer:
         self.voice_by_writer: Dict[asyncio.StreamWriter, str] = {}
         for room in self.store.list_voice_rooms():
             self.voice_rooms[room] = set()
+            # Every in-memory connection is gone on a fresh start, so any
+            # occupancy persisted from before a restart/crash is stale —
+            # zero it out rather than let the admin dashboard show ghosts.
+            self.store.set_voice_room_occupancy(room, 0)
         if "lobby" not in self.voice_rooms:
             self.store.ensure_voice_room("lobby", "system")
             self.voice_rooms["lobby"] = set()
@@ -151,6 +155,7 @@ class ChatServer:
         voice_room = self.voice_by_writer.pop(writer, None)
         if voice_room and writer in self.voice_rooms.get(voice_room, set()):
             self.voice_rooms[voice_room].discard(writer)
+            self.store.set_voice_room_occupancy(voice_room, len(self.voice_rooms[voice_room]))
 
         if username:
             self.store.set_user_presence(username, is_online=False)
@@ -408,10 +413,22 @@ class ChatServer:
                 elif kind == "search_messages":
                     if writer not in self.clients:
                         continue
-                    channel = str(packet.get("channel", "")).strip().lower() or self.client_channels.get(writer, "general")
                     query = str(packet.get("query", "")).strip()
                     if not query:
                         continue
+                    dm_with = str(packet.get("with", "")).strip().lower()[:24]
+                    if dm_with:
+                        requester = self.clients[writer]["username"]
+                        results = self.store.search_dm_messages(requester, dm_with, query, limit=30)
+                        await self.send(writer, {
+                            "type": "search_results",
+                            "scope": "dm",
+                            "with": dm_with,
+                            "query": query,
+                            "results": results,
+                        })
+                        continue
+                    channel = str(packet.get("channel", "")).strip().lower() or self.client_channels.get(writer, "general")
                     results = self.store.search_channel_messages(channel, query, limit=30)
                     await self.send(writer, {
                         "type": "search_results",
@@ -693,8 +710,10 @@ class ChatServer:
                     prev = self.voice_by_writer.get(writer)
                     if prev and writer in self.voice_rooms.get(prev, set()):
                         self.voice_rooms[prev].discard(writer)
+                        self.store.set_voice_room_occupancy(prev, len(self.voice_rooms[prev]))
                     self.voice_rooms[room].add(writer)
                     self.voice_by_writer[writer] = room
+                    self.store.set_voice_room_occupancy(room, len(self.voice_rooms[room]))
                     self.store.log_event("voice_join", actor=actor, metadata={"room": room, "from": prev or ""})
                     await self.broadcast_social_state()
 
@@ -705,6 +724,7 @@ class ChatServer:
                     prev = self.voice_by_writer.pop(writer, None)
                     if prev and writer in self.voice_rooms.get(prev, set()):
                         self.voice_rooms[prev].discard(writer)
+                        self.store.set_voice_room_occupancy(prev, len(self.voice_rooms[prev]))
                         self.store.log_event("voice_leave", actor=actor, metadata={"room": prev})
                         await self.broadcast_social_state()
 

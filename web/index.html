@@ -71,6 +71,10 @@
           <h3>Direct Messages</h3>
           <button id="newDmBtn" class="icon-btn" title="New direct message" type="button">+</button>
         </div>
+        <button id="dmFinderBtn" class="dm-finder" type="button">Find or start a conversation</button>
+        <div id="dmSearchWrap" class="dm-search-wrap hidden">
+          <input id="dmSearchInput" class="dm-search-input" type="search" placeholder="Search people" autocomplete="off">
+        </div>
         <ul id="dmList" class="list dm-list"></ul>
       </section>
 
@@ -116,7 +120,7 @@
     <section class="chat-pane">
       <header class="chat-topbar">
         <div class="channel-headline">
-          <div class="hash">#</div>
+          <div id="chatGlyph" class="hash">#</div>
           <div>
             <div id="channelTitle" class="chat-title">general</div>
             <div id="channelMeta" class="chat-meta">Community chat</div>
@@ -134,7 +138,7 @@
 
       <div class="message-toolbar">
         <input id="messageSearch" type="text" class="message-search-input" placeholder="Search messages... (Enter searches full history)">
-        <button class="icon-call" type="button" title="Create Poll" onclick="openCreatePoll()">📊</button>
+          <button id="pollBtn" class="icon-call" type="button" title="Create Poll" onclick="openCreatePoll()">📊</button>
       </div>
       <div id="pollContainer" class="poll-container hidden"></div>
       <section id="messages" class="messages"></section>
