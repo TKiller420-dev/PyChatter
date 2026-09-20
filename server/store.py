@@ -68,6 +68,16 @@ class ChatStore:
             )
             cur.execute(
                 """
+                CREATE TABLE IF NOT EXISTS dm_reads (
+                    username TEXT NOT NULL,
+                    partner TEXT NOT NULL,
+                    last_read_at INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (username, partner)
+                )
+                """
+            )
+            cur.execute(
+                """
                 CREATE TABLE IF NOT EXISTS user_sessions (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     username TEXT NOT NULL,
@@ -166,6 +176,10 @@ class ChatStore:
                 cur.execute("ALTER TABLE users ADD COLUMN avatar_url TEXT")
             if "name_color" not in user_cols:
                 cur.execute("ALTER TABLE users ADD COLUMN name_color TEXT")
+            if "status" not in user_cols:
+                cur.execute("ALTER TABLE users ADD COLUMN status TEXT NOT NULL DEFAULT 'online'")
+            if "custom_status" not in user_cols:
+                cur.execute("ALTER TABLE users ADD COLUMN custom_status TEXT NOT NULL DEFAULT ''")
 
             # v2 migration: message editing, soft-delete, reactions.
             cur.execute("PRAGMA table_info(channel_messages)")
@@ -185,6 +199,63 @@ class ChatStore:
                     emoji TEXT NOT NULL,
                     created_at INTEGER NOT NULL,
                     PRIMARY KEY (msg_id, username, emoji)
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS user_channel_state (
+                    username TEXT NOT NULL,
+                    channel TEXT NOT NULL,
+                    favorite INTEGER NOT NULL DEFAULT 0,
+                    last_read_at INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (username, channel)
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS message_bookmarks (
+                    username TEXT NOT NULL,
+                    msg_id INTEGER NOT NULL,
+                    channel TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    PRIMARY KEY (username, msg_id)
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS blocked_users (
+                    username TEXT NOT NULL,
+                    blocked_username TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    PRIMARY KEY (username, blocked_username)
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS message_pins (
+                    channel TEXT NOT NULL,
+                    msg_id INTEGER NOT NULL,
+                    pinned_by TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    PRIMARY KEY (channel, msg_id)
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS mention_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username TEXT NOT NULL,
+                    message_id INTEGER NOT NULL,
+                    channel TEXT NOT NULL,
+                    mentioned_by TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    seen INTEGER NOT NULL DEFAULT 0
                 )
                 """
             )
@@ -575,6 +646,138 @@ class ChatStore:
             )
             self.conn.commit()
 
+    def set_channel_favorite(self, username: str, channel: str, favorite: bool) -> None:
+        with self.lock:
+            self.conn.execute(
+                "INSERT INTO user_channel_state(username, channel, favorite) VALUES (?, ?, ?) "
+                "ON CONFLICT(username, channel) DO UPDATE SET favorite=excluded.favorite",
+                (username, channel, 1 if favorite else 0),
+            )
+            self.conn.commit()
+
+    def get_favorite_channels(self, username: str) -> list[str]:
+        with self.lock:
+            rows = self.conn.execute(
+                "SELECT channel FROM user_channel_state WHERE username = ? AND favorite = 1 ORDER BY channel",
+                (username,),
+            ).fetchall()
+        return [str(row["channel"]) for row in rows]
+
+    def mark_channel_read(self, username: str, channel: str) -> None:
+        now = int(time.time())
+        with self.lock:
+            self.conn.execute(
+                "INSERT INTO user_channel_state(username, channel, last_read_at) VALUES (?, ?, ?) "
+                "ON CONFLICT(username, channel) DO UPDATE SET last_read_at=excluded.last_read_at",
+                (username, channel, now),
+            )
+            self.conn.commit()
+
+    def get_unread_counts(self, username: str) -> dict[str, int]:
+        with self.lock:
+            rows = self.conn.execute(
+                "SELECT c.name, COUNT(cm.id) AS unread FROM channels c "
+                "LEFT JOIN user_channel_state s ON s.channel = c.name AND s.username = ? "
+                "LEFT JOIN channel_messages cm ON cm.channel = c.name AND cm.deleted = 0 "
+                "AND cm.created_at > COALESCE(s.last_read_at, 0) AND cm.author != ? "
+                "GROUP BY c.name",
+                (username, username),
+            ).fetchall()
+        return {str(row["name"]): int(row["unread"] or 0) for row in rows}
+
+    def set_bookmark(self, username: str, msg_id: int, channel: str, bookmarked: bool) -> None:
+        with self.lock:
+            if bookmarked:
+                self.conn.execute(
+                    "INSERT OR IGNORE INTO message_bookmarks(username, msg_id, channel, created_at) VALUES (?, ?, ?, ?)",
+                    (username, msg_id, channel, int(time.time())),
+                )
+            else:
+                self.conn.execute("DELETE FROM message_bookmarks WHERE username = ? AND msg_id = ?", (username, msg_id))
+            self.conn.commit()
+
+    def get_bookmarks(self, username: str) -> list[dict[str, Any]]:
+        with self.lock:
+            rows = self.conn.execute(
+                "SELECT msg_id, channel, created_at FROM message_bookmarks WHERE username = ? ORDER BY created_at DESC LIMIT 200",
+                (username,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def set_blocked(self, username: str, target: str, blocked: bool) -> None:
+        with self.lock:
+            if blocked:
+                self.conn.execute(
+                    "INSERT OR IGNORE INTO blocked_users(username, blocked_username, created_at) VALUES (?, ?, ?)",
+                    (username, target, int(time.time())),
+                )
+            else:
+                self.conn.execute(
+                    "DELETE FROM blocked_users WHERE username = ? AND blocked_username = ?",
+                    (username, target),
+                )
+            self.conn.commit()
+
+    def get_blocked(self, username: str) -> list[str]:
+        with self.lock:
+            rows = self.conn.execute(
+                "SELECT blocked_username FROM blocked_users WHERE username = ? ORDER BY blocked_username",
+                (username,),
+            ).fetchall()
+        return [str(row["blocked_username"]) for row in rows]
+
+    def set_pin(self, channel: str, msg_id: int, username: str, pinned: bool) -> None:
+        with self.lock:
+            if pinned:
+                self.conn.execute(
+                    "INSERT OR IGNORE INTO message_pins(channel, msg_id, pinned_by, created_at) VALUES (?, ?, ?, ?)",
+                    (channel, msg_id, username, int(time.time())),
+                )
+            else:
+                self.conn.execute("DELETE FROM message_pins WHERE channel = ? AND msg_id = ?", (channel, msg_id))
+            self.conn.commit()
+
+    def get_pins(self, channel: str) -> list[int]:
+        with self.lock:
+            rows = self.conn.execute(
+                "SELECT msg_id FROM message_pins WHERE channel = ? ORDER BY created_at ASC",
+                (channel,),
+            ).fetchall()
+        return [int(row["msg_id"]) for row in rows]
+
+    def record_mention(self, username: str, message_id: int, channel: str, mentioned_by: str, content: str) -> None:
+        with self.lock:
+            self.conn.execute(
+                "INSERT INTO mention_events(username, message_id, channel, mentioned_by, content, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (username, message_id, channel, mentioned_by, content, int(time.time())),
+            )
+            self.conn.commit()
+
+    def get_mentions(self, username: str, limit: int = 50) -> list[dict[str, Any]]:
+        with self.lock:
+            rows = self.conn.execute(
+                "SELECT message_id, channel, mentioned_by, content, created_at, seen FROM mention_events "
+                "WHERE username = ? ORDER BY created_at DESC LIMIT ?",
+                (username, limit),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def set_user_status(self, username: str, status: str, custom_status: str | None = None) -> None:
+        with self.lock:
+            if custom_status is None:
+                self.conn.execute("UPDATE users SET status = ? WHERE username = ?", (status, username))
+            else:
+                self.conn.execute(
+                    "UPDATE users SET status = ?, custom_status = ? WHERE username = ?",
+                    (status, custom_status, username),
+                )
+            self.conn.commit()
+
+    def get_user_status(self, username: str) -> tuple[str, str]:
+        with self.lock:
+            row = self.conn.execute("SELECT status, custom_status FROM users WHERE username = ?", (username,)).fetchone()
+        return (str(row["status"] or "online"), str(row["custom_status"] or "")) if row else ("online", "")
+
     def list_channels(self) -> list[str]:
         with self.lock:
             cur = self.conn.cursor()
@@ -803,7 +1006,28 @@ class ChatStore:
                 """,
                 (username, username, username, limit),
             )
-            return [{"username": row["partner"], "lastAt": row["last_at"]} for row in cur.fetchall()]
+            partners = [{"username": row["partner"], "lastAt": row["last_at"]} for row in cur.fetchall()]
+            for partner in partners:
+                read_row = cur.execute(
+                    "SELECT last_read_at FROM dm_reads WHERE username = ? AND partner = ?",
+                    (username, partner["username"]),
+                ).fetchone()
+                last_read = int(read_row["last_read_at"] if read_row else 0)
+                unread_row = cur.execute(
+                    "SELECT COUNT(*) AS n FROM direct_messages WHERE sender = ? AND recipient = ? AND created_at > ?",
+                    (partner["username"], username, last_read),
+                ).fetchone()
+                partner["unread"] = int(unread_row["n"] or 0)
+            return partners
+
+    def mark_dm_read(self, username: str, partner: str) -> None:
+        with self.lock:
+            self.conn.execute(
+                "INSERT INTO dm_reads(username, partner, last_read_at) VALUES (?, ?, ?) "
+                "ON CONFLICT(username, partner) DO UPDATE SET last_read_at=excluded.last_read_at",
+                (username, partner, int(time.time())),
+            )
+            self.conn.commit()
 
     def user_exists(self, username: str) -> bool:
         username = username.strip().lower()

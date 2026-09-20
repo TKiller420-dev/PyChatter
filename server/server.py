@@ -191,8 +191,13 @@ class ChatServer:
                 "channels": sorted(self.channels.keys()),
                 "channel": channel,
                 "history": history,
-                "pinned": self.pinned_messages.get(channel, []),
+                "pinned": self.store.get_pins(channel),
                 "poll": self._poll_packet(channel)["poll"],
+                "favorites": self.store.get_favorite_channels(client["username"]),
+                "unread_counts": self.store.get_unread_counts(client["username"]),
+                "bookmarks": self.store.get_bookmarks(client["username"]),
+                "blocked_users": self.store.get_blocked(client["username"]),
+                "mentions": self.store.get_mentions(client["username"]),
             },
         )
 
@@ -241,6 +246,10 @@ class ChatServer:
         self.clients[writer] = {"username": username, "role": role, "session_id": session_id}
         self.client_channels[writer] = channel
         self.online_users[username] = writer
+        saved_status, saved_custom_status = self.store.get_user_status(username)
+        self.user_statuses[username] = saved_status
+        self.user_custom_status[username] = saved_custom_status
+        self.blocked_users[username] = set(self.store.get_blocked(username))
         self.store.log_event("user_authenticated", actor=username, channel=channel, metadata={"action": action})
 
         profile = self.store.get_user_profile(username)
@@ -385,6 +394,7 @@ class ChatServer:
                     mentioned = set(re.findall(r"@([a-z0-9_-]{1,24})", content.lower()))
                     mentioned.discard(username)
                     for target in mentioned:
+                        self.store.record_mention(target, msg_id, channel, username, content)
                         target_writer = self.online_users.get(target)
                         if target_writer and target_writer in self.clients:
                             await self.send(target_writer, {
@@ -505,6 +515,9 @@ class ChatServer:
                     if not self.store.user_exists(recipient):
                         await self.send(writer, {"type": "action_error", "message": f"User '{recipient}' does not exist."})
                         continue
+                    if sender in self.store.get_blocked(recipient):
+                        await self.send(writer, {"type": "action_error", "message": "You cannot message this user."})
+                        continue
 
                     msg_id = fast_hash(f"dm:{sender}:{recipient}:{time.time_ns()}:{content}")
                     created_at = int(time.time())
@@ -530,6 +543,16 @@ class ChatServer:
                     to_writer = self.online_users.get(recipient)
                     if to_writer and to_writer is not writer:
                         await self.send(to_writer, dm_packet)
+                    await self.broadcast_social_state()
+
+                elif kind == "dm_mark_read":
+                    if writer not in self.clients:
+                        continue
+                    username = self.clients[writer]["username"]
+                    partner = str(packet.get("with", "")).strip().lower()[:24]
+                    if partner and self.store.user_exists(partner):
+                        self.store.mark_dm_read(username, partner)
+                        await self.send_social_state(writer)
 
                 elif kind == "dm_history":
                     if writer not in self.clients:
@@ -836,6 +859,7 @@ class ChatServer:
                         status = "online"
                     self.user_statuses[username] = status
                     self.clients[writer]["status"] = status
+                    self.store.set_user_status(username, status)
                     channel = self.client_channels.get(writer, "general")
                     await self.send_roster(channel)
                     await self.broadcast_social_state()
@@ -846,6 +870,7 @@ class ChatServer:
                     username = self.clients[writer]["username"]
                     message = str(packet.get("message", "")).strip()[:100]
                     self.user_custom_status[username] = message
+                    self.store.set_user_status(username, self.user_statuses.get(username, "online"), message)
                     # Broadcast to everyone currently connected so their member
                     # lists update live, regardless of channel/friend relationship —
                     # cheap at this app's scale and simpler than tracking who
@@ -864,6 +889,7 @@ class ChatServer:
                     target = str(packet.get("user", "")).strip().lower()[:24]
                     if target and target != username:
                         self.blocked_users[username].add(target)
+                        self.store.set_blocked(username, target, True)
                         await self.send(writer, {
                             "type": "system",
                             "message": f"Blocked {target}"
@@ -876,6 +902,7 @@ class ChatServer:
                     target = str(packet.get("user", "")).strip().lower()[:24]
                     if target in self.blocked_users[username]:
                         self.blocked_users[username].remove(target)
+                        self.store.set_blocked(username, target, False)
                         await self.send(writer, {
                             "type": "system",
                             "message": f"Unblocked {target}"
@@ -890,12 +917,14 @@ class ChatServer:
                         await self.send(writer, {"type": "action_error", "message": "Only mods and admins can pin messages."})
                         continue
                     channel = self.client_channels.get(writer, "general")
+                    self.pinned_messages[channel] = self.store.get_pins(channel)
                     try:
                         msg_id = int(packet.get("id", 0))
                     except (TypeError, ValueError):
                         continue
                     if msg_id and msg_id not in self.pinned_messages[channel]:
                         self.pinned_messages[channel].append(msg_id)
+                        self.store.set_pin(channel, msg_id, username, True)
                         self.store.log_event("message_pinned", actor=username, channel=channel, metadata={"id": msg_id})
                         await self.broadcast(channel, {
                             "type": "pinned_update",
@@ -912,18 +941,90 @@ class ChatServer:
                         await self.send(writer, {"type": "action_error", "message": "Only mods and admins can unpin messages."})
                         continue
                     channel = self.client_channels.get(writer, "general")
+                    self.pinned_messages[channel] = self.store.get_pins(channel)
                     try:
                         msg_id = int(packet.get("id", 0))
                     except (TypeError, ValueError):
                         continue
                     if msg_id in self.pinned_messages[channel]:
                         self.pinned_messages[channel].remove(msg_id)
+                        self.store.set_pin(channel, msg_id, username, False)
                         self.store.log_event("message_unpinned", actor=username, channel=channel, metadata={"id": msg_id})
                         await self.broadcast(channel, {
                             "type": "pinned_update",
                             "channel": channel,
                             "pinned": self.pinned_messages[channel],
                         })
+
+                elif kind == "channel_favorite":
+                    if writer not in self.clients:
+                        continue
+                    username = self.clients[writer]["username"]
+                    channel = str(packet.get("channel", "")).strip().lower()[:32]
+                    favorite = bool(packet.get("favorite", False))
+                    if channel not in self.channels:
+                        await self.send(writer, {"type": "action_error", "message": "Channel not found."})
+                        continue
+                    self.store.set_channel_favorite(username, channel, favorite)
+                    await self.send(writer, {
+                        "type": "channel_state",
+                        "favorites": self.store.get_favorite_channels(username),
+                    })
+
+                elif kind == "mark_read":
+                    if writer not in self.clients:
+                        continue
+                    username = self.clients[writer]["username"]
+                    channel = str(packet.get("channel", "")).strip().lower()[:32]
+                    if channel:
+                        self.store.mark_channel_read(username, channel)
+                    await self.send(writer, {
+                        "type": "unread_state",
+                        "unread_counts": self.store.get_unread_counts(username),
+                    })
+
+                elif kind == "bookmark_message":
+                    if writer not in self.clients:
+                        continue
+                    username = self.clients[writer]["username"]
+                    try:
+                        msg_id = int(packet.get("id", 0))
+                    except (TypeError, ValueError):
+                        continue
+                    channel = str(packet.get("channel", "")).strip().lower()[:32]
+                    bookmarked = bool(packet.get("bookmarked", True))
+                    if not msg_id or not channel:
+                        continue
+                    self.store.set_bookmark(username, msg_id, channel, bookmarked)
+                    await self.send(writer, {
+                        "type": "bookmark_state",
+                        "bookmarks": self.store.get_bookmarks(username),
+                    })
+
+                elif kind == "mention_history":
+                    if writer not in self.clients:
+                        continue
+                    username = self.clients[writer]["username"]
+                    await self.send(writer, {"type": "mention_history", "mentions": self.store.get_mentions(username)})
+
+                elif kind == "user_state_sync":
+                    if writer not in self.clients:
+                        continue
+                    username = self.clients[writer]["username"]
+                    status, custom_status = self.store.get_user_status(username)
+                    self.user_statuses[username] = status
+                    self.user_custom_status[username] = custom_status
+                    self.blocked_users[username] = set(self.store.get_blocked(username))
+                    await self.send(writer, {
+                        "type": "user_state",
+                        "status": status,
+                        "custom_status": custom_status,
+                        "blocked_users": self.store.get_blocked(username),
+                        "bookmarks": self.store.get_bookmarks(username),
+                        "favorites": self.store.get_favorite_channels(username),
+                        "unread_counts": self.store.get_unread_counts(username),
+                        "mentions": self.store.get_mentions(username),
+                    })
 
                 elif kind == "typing":
                     if writer not in self.clients:

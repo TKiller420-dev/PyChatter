@@ -74,11 +74,57 @@ const localVideo = $("localVideo");
 const remoteVideo = $("remoteVideo");
 const friendsListEl = $("friendsList");
 const friendRequestsListEl = $("friendRequestsList");
+const dmListEl = $("dmList");
 const voiceRoomsListEl = $("voiceRoomsList");
 const voiceRoomMetaEl = $("voiceRoomMeta");
 const usersMetaEl = $("usersMeta");
 const friendsMetaEl = $("friendsMeta");
 const requestsMetaEl = $("requestsMeta");
+
+function renderDmList() {
+  if (!dmListEl) return;
+  dmListEl.innerHTML = "";
+  if (!state.dmPartners.length) {
+    const empty = document.createElement("li");
+    empty.className = "dm-empty";
+    empty.textContent = "No conversations yet";
+    dmListEl.appendChild(empty);
+    return;
+  }
+  state.dmPartners.forEach((partner) => {
+    const name = partner.username || partner;
+    const profile = profileFor(name);
+    const initial = escapeHtml((name || "?").slice(0, 1).toUpperCase());
+    const avatarStyle = profile.avatar_url ? ` style="background-image:url('${escapeHtml(profile.avatar_url)}')"` : "";
+    const unread = Number(partner.unread || state.dmUnread[name] || 0);
+    const li = document.createElement("li");
+    li.className = `dm-row${state.dmView === name ? " active" : ""}${unread ? " unread" : ""}`;
+    li.innerHTML = `<span class="identity-avatar${profile.avatar_url ? " has-image" : ""}"${avatarStyle}>${profile.avatar_url ? "" : initial}</span>`
+      + `<span class="dm-name">${escapeHtml(name)}</span>`
+      + (unread ? `<span class="dm-unread-badge">${unread > 99 ? "99+" : unread}</span>` : "");
+    li.addEventListener("click", () => openDmConversation(name));
+    dmListEl.appendChild(li);
+  });
+}
+
+function openDmConversation(name) {
+  const peer = String(name || "").trim().toLowerCase();
+  if (!peer || peer === state.username) return;
+  state.dmView = peer;
+  state.selectedUser = peer;
+  state.selectedFriend = state.friends.includes(peer) ? peer : "";
+  state.dmUnread[peer] = 0;
+  channelTitle.textContent = `@${peer}`;
+  channelMeta.textContent = "Direct message";
+  inputEl.placeholder = `Message @${peer}`;
+  messagesEl.innerHTML = "";
+  send({ type: "dm_history", with: peer });
+  send({ type: "dm_mark_read", with: peer });
+  renderDmList();
+  syncActionButtons();
+}
+
+window.openDmConversation = openDmConversation;
 
 const REMEMBER_KEY = "pychatter.remember.v1";
 
@@ -1023,6 +1069,8 @@ function handlePacket(packet) {
       setAuthenticated(true);
       send({ type: "who" });
       send({ type: "social_sync" });
+      send({ type: "user_state_sync" });
+      send({ type: "mention_history" });
       addMessage("System", `Logged in as ${state.username}`, "system");
       break;
     case "auth_error":
@@ -1050,6 +1098,7 @@ function handlePacket(packet) {
       state.voiceRooms = packet.voice_rooms || [];
       state.voiceState = packet.voice_state || {};
       state.currentVoiceRoom = packet.voice_room || "";
+      state.dmPartners = packet.dm_partners || [];
       mergeProfiles(packet.profiles || {});
       Object.assign(state.memberStatuses, packet.statuses || {});
       if (packet.my_status) {
@@ -1066,15 +1115,44 @@ function handlePacket(packet) {
       renderFriends();
       renderFriendRequests();
       renderVoiceRooms();
+      renderDmList();
       renderUsers();
       applySelfAvatar();
       syncActionButtons();
+      break;
+    case "user_state":
+      state.userStatus = packet.status || state.userStatus;
+      state.customStatus = packet.custom_status || "";
+      state.blockedUsers = packet.blocked_users || [];
+      state.favorites = new Set(packet.favorites || []);
+      state.unreadCount = packet.unread_counts || {};
+      state.bookmarkedMessages = new Set((packet.bookmarks || []).map((item) => Number(item.msg_id)));
+      updateStatusBadge();
+      updateUnreadBadges();
+      renderChannelList();
+      break;
+    case "channel_state":
+      state.favorites = new Set(packet.favorites || []);
+      renderChannelList();
+      break;
+    case "unread_state":
+      state.unreadCount = packet.unread_counts || {};
+      updateUnreadBadges();
+      renderChannelList();
+      break;
+    case "bookmark_state":
+      state.bookmarkedMessages = new Set((packet.bookmarks || []).map((item) => Number(item.msg_id)));
+      break;
+    case "mention_history":
+      state.recentMentions = (packet.mentions || []).map((item) => item.mentioned_by).filter(Boolean);
+      saveMentionHistory();
       break;
     case "action_error":
       addMessage("System", packet.message || "Action failed", "system");
       break;
     case "welcome":
     case "channel_switched":
+      state.dmView = "";
       state.channel = packet.channel || "general";
       state.channels = packet.channels || ["general"];
       channelTitle.textContent = `#${state.channel}`;
@@ -1086,6 +1164,7 @@ function handlePacket(packet) {
       state.pinnedMessages.set(state.channel, packet.pinned || []);
       updatePinnedButton();
       renderPoll(state.channel, packet.poll || null);
+      renderDmList();
       break;
     case "channel_activity":
       if (packet.channel && packet.channel !== state.channel) {
@@ -1193,15 +1272,36 @@ function handlePacket(packet) {
       break;
     case "dm": {
       const peer = packet.sender === state.username ? packet.recipient : packet.sender;
-      addMessage(`DM ↔ ${peer}`, packet.content || "", "system");
+      if (state.dmView === peer) {
+        messagesEl.appendChild(buildMessageEl({
+          id: packet.id,
+          author: packet.sender,
+          author_name_color: packet.author_name_color || "",
+          content: packet.content || "",
+          created_at: packet.created_at,
+        }));
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+        send({ type: "dm_mark_read", with: peer });
+      } else {
+        state.dmUnread[peer] = (state.dmUnread[peer] || 0) + 1;
+        renderDmList();
+        showToast(`${peer} sent you a direct message`, "info");
+        showNotification(`${peer} sent you a message`, { body: packet.content || "" });
+      }
       break;
     }
     case "dm_history":
-      addMessage("System", `── DM history with ${packet.with || "?"} ──`, "system");
-      (packet.history || []).forEach((m) => {
-        const peer = m.sender === state.username ? m.recipient : m.sender;
-        addMessage(`DM ↔ ${peer}`, m.content || "", "system");
-      });
+      if (state.dmView !== String(packet.with || "").toLowerCase()) break;
+      messagesEl.innerHTML = "";
+      resetMessageGrouping();
+      (packet.history || []).forEach((m) => messagesEl.appendChild(buildMessageEl({
+        id: m.id,
+        author: m.sender,
+        author_name_color: m.author_name_color || "",
+        content: m.content || "",
+        created_at: m.created_at,
+      })));
+      messagesEl.scrollTop = messagesEl.scrollHeight;
       break;
     case "role_update":
       state.role = packet.role || state.role;
@@ -1237,7 +1337,14 @@ sendBtn.addEventListener("click", () => {
   if (!state.isAuthed) return;
   const content = inputEl.value.trim();
   if (!content) return;
-  const packet = { type: "message", content };
+  const packet = state.dmView
+    ? { type: "dm", to: state.dmView, content }
+    : { type: "message", content };
+  if (state.dmView) {
+    inputEl.value = "";
+    send(packet);
+    return;
+  }
   if (state.replyingTo) packet.reply_to = state.replyingTo.id;
   send(packet);
   inputEl.value = "";
@@ -1335,9 +1442,8 @@ window.openDmComposer = function(targetName) {
     showError("Select a user first");
     return;
   }
-  state.selectedUser = targetName;
-  state.selectedFriend = state.friends.includes(targetName) ? targetName : state.selectedFriend;
-  showPromptModal(`💬 Message ${targetName}`, "Type your message:", "handleSendDM");
+  openDmConversation(targetName);
+  inputEl.focus();
 };
 
 window.handleSendDM = function(text) {
@@ -1345,6 +1451,23 @@ window.handleSendDM = function(text) {
   send({ type: "dm", to: targetName.toLowerCase(), content: text.trim() });
   showSuccess(`Message sent to ${targetName}`);
 };
+
+window.openDmByName = function(name) {
+  const peer = String(name || "").trim().toLowerCase();
+  if (!peer || peer === state.username) {
+    showError("Enter another user's name.");
+    return;
+  }
+  if (!state.users.includes(peer) && !state.friends.includes(peer)) {
+    showError("That user is not available.");
+    return;
+  }
+  openDmConversation(peer);
+};
+
+$('newDmBtn')?.addEventListener('click', () => {
+  showPromptModal("New direct message", "Enter a username:", "openDmByName");
+});
 
 window.openChangeUsername = function() {
   if (!state.isAuthed) return;
@@ -2037,6 +2160,9 @@ function toggleFavorite(item) {
   }
   saveFavorites();
   renderChannels();
+  if (state.channels.includes(item)) {
+    send({ type: "channel_favorite", channel: item, favorite: state.favorites.has(item) });
+  }
 }
 
 function saveFavorites() {
@@ -2082,6 +2208,7 @@ function unblockUserWithServer(username) {
 function markAsRead(channel) {
   state.unreadCount[channel] = 0;
   updateUnreadBadges();
+  send({ type: "mark_read", channel });
 }
 
 function incrementUnread(channel) {
@@ -2197,6 +2324,7 @@ function trackMention(username) {
     if (state.recentMentions.length > 20) state.recentMentions.pop();
   }
   saveMentionHistory();
+  send({ type: "mention_history" });
 }
 
 function saveMentionHistory() {
@@ -2458,6 +2586,7 @@ function bookmarkMessage(msgId) {
     el.insertBefore(mark, el.firstChild);
   }
   saveBookmarks();
+  send({ type: "bookmark_message", id: msgId, channel: state.channel, bookmarked: true });
 }
 
 function unbookmarkMessage(msgId) {
@@ -2468,6 +2597,7 @@ function unbookmarkMessage(msgId) {
     el.querySelector(".bookmark-mark")?.remove();
   }
   saveBookmarks();
+  send({ type: "bookmark_message", id: msgId, channel: state.channel, bookmarked: false });
 }
 
 function saveBookmarks() {

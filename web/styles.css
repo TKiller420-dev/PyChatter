@@ -177,7 +177,7 @@ body {
 .app {
   display: grid;
   height: 100vh;
-  grid-template-columns: 72px 240px minmax(420px, 1fr) 240px;
+  grid-template-columns: 72px 240px minmax(0, 1fr) 240px;
 }
 
 .server-rail {
@@ -295,8 +295,21 @@ body {
 }
 
 .server-icon {
-  font-size: 24px;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  background: var(--brand);
+  color: #fff;
+  font-size: 0;
   flex-shrink: 0;
+}
+
+.server-icon::before {
+  content: "P";
+  font-size: 13px;
+  font-weight: 800;
 }
 
 .server-info {
@@ -495,11 +508,68 @@ body {
 }
 
 .quick-actions {
-  display: flex;
-  gap: 2px;
-  padding: 6px 8px;
+  display: none;
+}
+
+.dm-section {
+  padding: 10px 10px 4px;
+  flex: 0 0 auto;
+  min-height: 0;
   border-bottom: 1px solid #25282c;
-  flex-shrink: 0;
+}
+
+.dm-section .section-header {
+  margin-bottom: 4px;
+}
+
+.dm-list {
+  max-height: 184px;
+  overflow-y: auto;
+}
+
+.dm-row {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 5px 8px !important;
+  color: #b5bac1 !important;
+}
+
+.dm-row:hover,
+.dm-row.active {
+  background: rgba(79, 84, 92, 0.48);
+  color: #ffffff !important;
+}
+
+.dm-row.unread .dm-name {
+  color: #ffffff;
+  font-weight: 700;
+}
+
+.dm-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dm-unread-badge {
+  min-width: 17px;
+  padding: 2px 5px;
+  border-radius: 9px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.dm-empty {
+  color: #72767d !important;
+  cursor: default !important;
+  font-size: 12px;
+  padding: 7px 8px !important;
 }
 
 .quick-action-btn {
@@ -561,6 +631,13 @@ body {
   color: var(--text);
   border-radius: 4px;
   font-size: 13px;
+}
+
+/* Discord keeps channel search out of the resting sidebar; the existing
+   control remains available to the app and can still be shown by script. */
+#channelSearch,
+#channelCount {
+  display: none;
 }
 
 .search-input:focus {
@@ -993,15 +1070,15 @@ body {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px;
-  background: rgba(88, 101, 242, 0.1);
+  padding: 6px 4px;
+  background: transparent;
   border-radius: 6px;
   cursor: pointer;
   transition: all 0.2s;
 }
 
 .user-card:hover {
-  background: rgba(88, 101, 242, 0.15);
+  background: #35373c;
 }
 
 .user-avatar {
@@ -1542,10 +1619,16 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 17px;
+  font-size: 0;
   cursor: pointer;
   transition: background 0.1s ease, color 0.1s ease;
 }
+
+#voiceCallBtn::before { content: "☎"; font-size: 17px; }
+#videoCallBtn::before { content: "▣"; font-size: 17px; }
+#pinnedMessagesBtn::before { content: "◆"; font-size: 13px; }
+#memberListToggleBtn::before { content: "♟"; font-size: 18px; }
+#topbarSearchBtn::before { content: "⌕"; font-size: 23px; line-height: 1; }
 
 .icon-call:hover {
   background: rgba(79, 84, 92, 0.32);
