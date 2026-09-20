@@ -430,20 +430,37 @@ async function ensureLocalMedia(mode = "video") {
 // gets rejected), the call can reach "connected" with real tracks flowing
 // and still be completely silent on both ends, because the <video> element
 // itself never actually started playing.
+const _blockedMediaElements = new Set();
+
 function playMediaElement(el) {
   const attempt = el.play();
   if (attempt && typeof attempt.catch === "function") {
-    attempt.catch((err) => {
-      console.warn("Autoplay blocked for", el.id, err);
-      showError("Browser blocked call audio — click anywhere on the page to enable it.");
-      const resume = () => {
-        el.play().catch(() => {});
-        document.removeEventListener("click", resume);
-      };
-      document.addEventListener("click", resume, { once: true });
-    });
+    attempt
+      .then(() => {
+        _blockedMediaElements.delete(el);
+        updateEnableAudioBanner();
+      })
+      .catch((err) => {
+        console.warn("Autoplay blocked for", el.id, err);
+        _blockedMediaElements.add(el);
+        updateEnableAudioBanner();
+      });
   }
 }
+
+function updateEnableAudioBanner() {
+  const btn = $("enableAudioBtn");
+  if (!btn) return;
+  btn.classList.toggle("hidden", _blockedMediaElements.size === 0);
+}
+
+$("enableAudioBtn")?.addEventListener("click", () => {
+  // A real click on a real button, directly in the handler — this is
+  // exactly the kind of user gesture browsers require, unlike the
+  // .ontrack callback that first hit the block (that one fires on its
+  // own timer from network negotiation, not from anything the user did).
+  _blockedMediaElements.forEach((el) => playMediaElement(el));
+});
 
 async function createPeerConnection(peerUser, mode = "video") {
   const pc = new RTCPeerConnection({
@@ -740,6 +757,8 @@ window.declineIncomingCall = function() {
 
 function endCall(sendHangup) {
   stopRinging();
+  _blockedMediaElements.clear();
+  updateEnableAudioBanner();
   const peer = getPeer();
   if (sendHangup && peer) {
     send({ type: "rtc_signal", to: peer, signalType: "hangup" });

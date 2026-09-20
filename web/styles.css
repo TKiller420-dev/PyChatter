@@ -1896,6 +1896,34 @@ body {
   margin-bottom: 7px;
 }
 
+.enable-audio-banner {
+  display: block;
+  width: 100%;
+  margin-bottom: 8px;
+  padding: 10px 14px;
+  border: none;
+  border-radius: 6px;
+  background: var(--danger);
+  color: #ffffff;
+  font-size: 0.86rem;
+  font-weight: 700;
+  cursor: pointer;
+  animation: enableAudioPulse 1.4s ease-in-out infinite;
+}
+
+.enable-audio-banner:hover {
+  background: #c53537;
+}
+
+.enable-audio-banner.hidden {
+  display: none;
+}
+
+@keyframes enableAudioPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(242, 63, 66, 0.5); }
+  50% { box-shadow: 0 0 0 6px rgba(242, 63, 66, 0); }
+}
+
 .video-grid {
   display: grid;
   grid-template-columns: 1fr 160px;
