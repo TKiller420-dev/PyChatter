@@ -260,6 +260,15 @@ function selectedTarget() {
   return state.selectedFriend || state.selectedUser || "";
 }
 
+function selectUserTarget(name) {
+  if (!name) return;
+  state.selectedUser = name;
+  state.selectedFriend = state.friends.includes(name) ? name : "";
+  renderFriends();
+  renderUsers();
+  syncActionButtons();
+}
+
 function mergeProfiles(profiles) {
   if (!profiles || typeof profiles !== "object") return;
   Object.entries(profiles).forEach(([username, profile]) => {
@@ -579,6 +588,11 @@ function buildMemberRow(name, role, isActive, onSelect) {
 }
 
 function openMemberContextMenu(name, anchorEl) {
+  if (name === state.username) {
+    openSelfMenu(anchorEl || _lastClickPos);
+    return;
+  }
+
   const isBlocked = isUserBlocked(name);
   const isMod = state.role === "admin" || state.role === "mod";
   const content = `
@@ -595,6 +609,12 @@ function openMemberContextMenu(name, anchorEl) {
     ${isMod ? menuRow("👢", "Kick User", `closePopoutMenu(); kickUser('${name}')`, true) : ""}
   `;
   showPopoutMenu(anchorEl || _lastClickPos, content, { alignRight: true });
+}
+
+function openAuthorContextMenu(name, anchorEl) {
+  if (!name) return;
+  selectUserTarget(name);
+  openMemberContextMenu(name, anchorEl);
 }
 
 // FEATURE 13/14: Moderation — kick & timeout
@@ -956,7 +976,7 @@ function buildMessageEl(opts) {
     if (grouped) {
       gutter.innerHTML = `<span class="msg-hover-ts">${ts}</span>`;
     } else {
-      gutter.innerHTML = `<span class="msg-avatar${profile.avatar_url ? " has-image" : ""}"${avatarStyle}>${profile.avatar_url ? "" : initial}</span>`;
+      gutter.innerHTML = `<button class="msg-avatar${profile.avatar_url ? " has-image" : ""}"${avatarStyle} type="button" title="Open ${escapeHtml(author)} actions">${profile.avatar_url ? "" : initial}</button>`;
     }
     box.appendChild(gutter);
   }
@@ -975,7 +995,7 @@ function buildMessageEl(opts) {
   if (!grouped) {
     const head = document.createElement("div");
     head.className = "who";
-    head.innerHTML = `<span class="msg-author"${authorStyle}>${escapeHtml(author)}</span>${ts ? ` <span class="msg-ts">${ts}</span>` : ""}`;
+    head.innerHTML = `<button class="msg-author" type="button"${authorStyle}>${escapeHtml(author)}</button>${ts ? ` <span class="msg-ts">${ts}</span>` : ""}`;
     content.appendChild(head);
   }
 
@@ -1001,6 +1021,14 @@ function buildMessageEl(opts) {
   }
 
   box.appendChild(content);
+  if (!isSystem) {
+    box.querySelectorAll(".msg-author, .msg-avatar").forEach((el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        openAuthorContextMenu(author, el);
+      });
+    });
+  }
   return box;
 }
 
@@ -1628,9 +1656,18 @@ window.handleUnblockUser = function(username) {
 };
 
 // New Feature Event Listeners
-$("statusBtn").addEventListener("click", () => {
-  showStatusSelector();
-});
+const selfUserCard = $("selfUserCard");
+if (selfUserCard) {
+  selfUserCard.addEventListener("click", (e) => {
+    e.stopPropagation();
+    openSelfMenu(selfUserCard);
+  });
+  selfUserCard.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    e.preventDefault();
+    openSelfMenu(selfUserCard);
+  });
+}
 
 $("searchUsersGlobalBtn").addEventListener("click", () => {
   showPromptModal("🔍 Search Users & Channels", "What would you like to search?", "performSearch");
@@ -1684,8 +1721,7 @@ function menuRow(icon, label, onclick, danger = false) {
   return `<button class="menu-row${danger ? " danger" : ""}" onclick="${onclick}"><span class="menu-row-icon">${icon}</span><span>${label}</span></button>`;
 }
 
-$("quickMenuBtn").addEventListener("click", (e) => {
-  e.stopPropagation();
+function openSelfMenu(anchorEl) {
   const content = `
     ${menuRow("🟢", "Change Status", "closePopoutMenu(); showStatusSelector()")}
     ${menuRow("💬", "Set Custom Status", "closePopoutMenu(); openCustomStatusModal()")}
@@ -1697,7 +1733,12 @@ $("quickMenuBtn").addEventListener("click", (e) => {
     <div class="menu-divider"></div>
     ${menuRow("🚪", "Log Out", "doLogout()", true)}
   `;
-  showPopoutMenu($("quickMenuBtn"), content, { above: true });
+  showPopoutMenu(anchorEl || $("quickMenuBtn") || _lastClickPos, content, { above: true, alignRight: true });
+}
+
+$("quickMenuBtn").addEventListener("click", (e) => {
+  e.stopPropagation();
+  openSelfMenu($("quickMenuBtn"));
 });
 
 window.showAccountInfo = function() {
@@ -2162,19 +2203,11 @@ window.clearCustomStatus = function() {
 };
 
 function updateStatusBadge() {
-  const badge = $("statusBadge");
-  if (badge) {
-    const label = DISCORD_STATUSES.find(s => s.key === state.userStatus)?.label || "Online";
-    const customPart = state.customStatus ? ` — ${escapeHtml(state.customStatus)}` : "";
-    badge.innerHTML = `<span class="status-swatch status-${state.userStatus}"></span>${label}${customPart}`;
-  }
+  const label = DISCORD_STATUSES.find(s => s.key === state.userStatus)?.label || "Online";
+  if (statusText) statusText.textContent = state.customStatus || label;
   const selfDot = $("selfStatusDot");
   if (selfDot) {
     selfDot.className = `status-swatch status-${state.userStatus}`;
-  }
-  const statusBtnDot = document.querySelector("#statusBtn .status-swatch");
-  if (statusBtnDot) {
-    statusBtnDot.className = `status-swatch status-${state.userStatus}`;
   }
   renderUsers(); // refresh own row's status dot in the member list
 }
