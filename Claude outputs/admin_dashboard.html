@@ -1,0 +1,168 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - PyChatter Admin{% endblock %}
+{% block page_title %}Dashboard{% endblock %}
+
+{% block content %}
+<div class="stats-grid">
+    <!-- Server Stats -->
+    <div class="stat-card">
+        <div class="stat-label">CPU Usage</div>
+        <div class="stat-value" data-stat="cpu">{{ server_stats.cpu_percent | round(1) }}%</div>
+    </div>
+
+    <div class="stat-card">
+        <div class="stat-label">Memory Usage</div>
+        <div class="stat-value">{{ server_stats.memory_percent | round(1) }}%</div>
+    </div>
+
+    <div class="stat-card">
+        <div class="stat-label">Disk Usage</div>
+        <div class="stat-value">{{ server_stats.disk_percent | round(1) }}%</div>
+    </div>
+
+    <div class="stat-card">
+        <div class="stat-label">System Uptime</div>
+        <div class="stat-value" style="font-size: 20px;">{{ server_stats.uptime }}</div>
+    </div>
+</div>
+
+<!-- User Statistics -->
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="stat-label">Total Users</div>
+        <div class="stat-value">{{ user_stats.total_users }}</div>
+    </div>
+
+    <div class="stat-card">
+        <div class="stat-label">Online Users</div>
+        <div class="stat-value" style="color: #00cc44;">{{ user_stats.online_users }}</div>
+    </div>
+
+    <div class="stat-card">
+        <div class="stat-label">Administrators</div>
+        <div class="stat-value">{{ user_stats.admins }}</div>
+    </div>
+
+    <div class="stat-card">
+        <div class="stat-label">Recent Registrations (24h)</div>
+        <div class="stat-value">{{ user_stats.recent_registrations }}</div>
+    </div>
+</div>
+
+<!-- Channel Statistics -->
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="stat-label">Total Channels</div>
+        <div class="stat-value">{{ channel_stats.total_channels }}</div>
+    </div>
+
+    <div class="stat-card">
+        <div class="stat-label">Total Messages</div>
+        <div class="stat-value">{{ channel_stats.total_messages }}</div>
+    </div>
+
+    <div class="stat-card">
+        <div class="stat-label">Direct Messages</div>
+        <div class="stat-value">{{ channel_stats.total_dms }}</div>
+    </div>
+
+    <div class="stat-card">
+        <div class="stat-label">Messages (Last 24h)</div>
+        <div class="stat-value">{{ channel_stats.messages_24h }}</div>
+    </div>
+</div>
+
+<!-- System Health Overview -->
+<div class="card">
+    <h3>System Health Status</h3>
+    <table>
+        <tr>
+            <td><strong>Server Status</strong></td>
+            <td>
+                {% if server_stats.cpu_percent < 80 %}
+                    <span class="status active">🟢 Healthy</span>
+                {% elif server_stats.cpu_percent < 95 %}
+                    <span class="status" style="background: #ffaa00; color: #000;">⚠️ High Load</span>
+                {% else %}
+                    <span class="status inactive">🔴 Critical</span>
+                {% endif %}
+            </td>
+        </tr>
+        <tr>
+            <td><strong>Memory Status</strong></td>
+            <td>
+                {% if server_stats.memory_percent < 80 %}
+                    <span class="status active">🟢 Normal</span>
+                {% elif server_stats.memory_percent < 95 %}
+                    <span class="status" style="background: #ffaa00; color: #000;">⚠️ High</span>
+                {% else %}
+                    <span class="status inactive">🔴 Critical</span>
+                {% endif %}
+            </td>
+        </tr>
+        <tr>
+            <td><strong>Disk Status</strong></td>
+            <td>
+                {% if server_stats.disk_percent < 80 %}
+                    <span class="status active">🟢 Plenty Space</span>
+                {% elif server_stats.disk_percent < 95 %}
+                    <span class="status" style="background: #ffaa00; color: #000;">⚠️ Running Low</span>
+                {% else %}
+                    <span class="status inactive">🔴 Critical</span>
+                {% endif %}
+            </td>
+        </tr>
+    </table>
+</div>
+
+<!-- Quick Actions -->
+<div class="card">
+    <h3>Quick Actions</h3>
+    <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+        <a href="/admin/users" class="btn btn-primary">👥 Manage Users</a>
+        <a href="/admin/channels" class="btn btn-primary">💬 Manage Channels</a>
+        <a href="/admin/messages" class="btn btn-primary">📝 Monitor Messages</a>
+        <a href="/admin/logs" class="btn btn-primary">📋 View Audit Logs</a>
+        <a href="/admin/server" class="btn btn-primary">⚙️ Server Control</a>
+    </div>
+</div>
+
+<style>
+    .stat-card {
+        animation: fadeIn 0.5s ease-in;
+    }
+
+    @keyframes fadeIn {
+        from {
+            opacity: 0;
+            transform: translateY(10px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+
+    table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+
+    td {
+        padding: 15px;
+        border-bottom: 1px solid #333;
+    }
+
+    td:first-child {
+        color: #00d4ff;
+    }
+</style>
+
+<script>
+    // Auto-refresh dashboard every 10 seconds
+    setInterval(function() {
+        location.reload();
+    }, 10000);
+</script>
+{% endblock %}

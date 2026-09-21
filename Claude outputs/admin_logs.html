@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+
+{% block title %}Audit Logs - PyChatter Admin{% endblock %}
+{% block page_title %}Audit Logs{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h3>Server Event Log</h3>
+
+    {% if logs %}
+        <div style="max-height: 700px; overflow-y: auto;">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Event Type</th>
+                        <th>User</th>
+                        <th>Details</th>
+                        <th>Timestamp</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for log in logs %}
+                    <tr>
+                        <td>
+                            {% if log.event_type == 'user_login' %}
+                                <span style="color: #00cc44;">🔓 Login</span>
+                            {% elif log.event_type == 'user_logout' %}
+                                <span style="color: #cc9900;">🔒 Logout</span>
+                            {% elif log.event_type == 'user_register' %}
+                                <span style="color: #00d4ff;">👤 Register</span>
+                            {% elif log.event_type == 'message_sent' %}
+                                <span style="color: #a0a0a0;">💬 Message</span>
+                            {% elif log.event_type == 'channel_create' %}
+                                <span style="color: #00d4ff;">➕ Channel Created</span>
+                            {% elif log.event_type == 'channel_delete' %}
+                                <span style="color: #c72c48;">❌ Channel Deleted</span>
+                            {% elif log.event_type == 'role_change' %}
+                                <span style="color: #00d4ff;">👑 Role Changed</span>
+                            {% elif log.event_type == 'user_ban' %}
+                                <span style="color: #c72c48;">🚫 User Banned</span>
+                            {% else %}
+                                <span>{{ log.event_type }}</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if log.username %}
+                                <strong>{{ log.username }}</strong>
+                            {% else %}
+                                <span style="color: #666;">System</span>
+                            {% endif %}
+                        </td>
+                        <td style="max-width: 350px; word-wrap: break-word; font-size: 12px;">
+                            {% if log.details %}
+                                {{ log.details }}
+                            {% else %}
+                                <span style="color: #666;">—</span>
+                            {% endif %}
+                        </td>
+                        <td style="font-size: 12px; color: #a0a0a0; white-space: nowrap;">{{ log.event_time }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% else %}
+        <div class="alert alert-info">No events logged yet.</div>
+    {% endif %}
+</div>
+
+<div class="card">
+    <h3>Event Statistics</h3>
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px;">
+        {% set login_count = logs | selectattr('event_type', 'equalto', 'user_login') | list | length %}
+        {% set message_count = logs | selectattr('event_type', 'equalto', 'message_sent') | list | length %}
+        {% set admin_count = logs | selectattr('event_type', 'equalto', 'role_change') | list | length %}
+
+        <div style="text-align: center; padding: 15px; background: #252525; border-radius: 4px;">
+            <div style="font-size: 12px; color: #a0a0a0; margin-bottom: 10px;">Logins</div>
+            <div style="font-size: 24px; font-weight: bold; color: #00cc44;">{{ login_count }}</div>
+        </div>
+
+        <div style="text-align: center; padding: 15px; background: #252525; border-radius: 4px;">
+            <div style="font-size: 12px; color: #a0a0a0; margin-bottom: 10px;">Messages</div>
+            <div style="font-size: 24px; font-weight: bold; color: #00d4ff;">{{ message_count }}</div>
+        </div>
+
+        <div style="text-align: center; padding: 15px; background: #252525; border-radius: 4px;">
+            <div style="font-size: 12px; color: #a0a0a0; margin-bottom: 10px;">Admin Actions</div>
+            <div style="font-size: 24px; font-weight: bold; color: #a0a0a0;">{{ admin_count }}</div>
+        </div>
+
+        <div style="text-align: center; padding: 15px; background: #252525; border-radius: 4px;">
+            <div style="font-size: 12px; color: #a0a0a0; margin-bottom: 10px;">Total Events</div>
+            <div style="font-size: 24px; font-weight: bold; color: #00d4ff;">{{ logs | length }}</div>
+        </div>
+    </div>
+</div>
+
+<style>
+    table {
+        width: 100%;
+        font-size: 13px;
+    }
+
+    thead {
+        position: sticky;
+        top: 0;
+        background: #252525;
+    }
+
+    td {
+        padding: 12px;
+        border-bottom: 1px solid #333;
+    }
+
+    tbody tr:hover {
+        background: #252525;
+    }
+</style>
+{% endblock %}

@@ -1,0 +1,186 @@
+{% extends "base.html" %}
+
+{% block title %}Server - PyChatter Admin{% endblock %}
+{% block page_title %}Server Management{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h3>Service Status & Control</h3>
+    <table>
+        <thead>
+            <tr>
+                <th>Service</th>
+                <th>Status</th>
+                <th>Description</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><strong>pychatter-server</strong></td>
+                <td>
+                    {% if services['pychatter-server'] == 'active' %}
+                        <span class="status active">🟢 Active</span>
+                    {% elif services['pychatter-server'] == 'inactive' %}
+                        <span class="status inactive">🔴 Inactive</span>
+                    {% else %}
+                        <span class="status" style="background: #ffaa00; color: #000;">⚠️ Failed</span>
+                    {% endif %}
+                </td>
+                <td>Main PyChatter chat server (port 9011)</td>
+                <td>
+                    <button class="btn btn-primary btn-sm" onclick="restartService('pychatter-server')">Restart</button>
+                    <button class="btn btn-secondary btn-sm" onclick="viewLogs('pychatter-server')">Logs</button>
+                </td>
+            </tr>
+
+            <tr>
+                <td><strong>pychatter-web</strong></td>
+                <td>
+                    {% if services['pychatter-web'] == 'active' %}
+                        <span class="status active">🟢 Active</span>
+                    {% elif services['pychatter-web'] == 'inactive' %}
+                        <span class="status inactive">🔴 Inactive</span>
+                    {% else %}
+                        <span class="status" style="background: #ffaa00; color: #000;">⚠️ Failed</span>
+                    {% endif %}
+                </td>
+                <td>Web bridge interface (port 9010)</td>
+                <td>
+                    <button class="btn btn-primary btn-sm" onclick="restartService('pychatter-web')">Restart</button>
+                    <button class="btn btn-secondary btn-sm" onclick="viewLogs('pychatter-web')">Logs</button>
+                </td>
+            </tr>
+
+            <tr>
+                <td><strong>nginx</strong></td>
+                <td>
+                    {% if services['nginx'] == 'active' %}
+                        <span class="status active">🟢 Active</span>
+                    {% elif services['nginx'] == 'inactive' %}
+                        <span class="status inactive">🔴 Inactive</span>
+                    {% else %}
+                        <span class="status" style="background: #ffaa00; color: #000;">⚠️ Failed</span>
+                    {% endif %}
+                </td>
+                <td>Nginx reverse proxy (ports 80, 443, 9012)</td>
+                <td>
+                    <button class="btn btn-primary btn-sm" onclick="restartService('nginx')">Restart</button>
+                    <button class="btn btn-secondary btn-sm" onclick="viewLogs('nginx')">Logs</button>
+                </td>
+            </tr>
+        </tbody>
+    </table>
+</div>
+
+<!-- Service Logs -->
+<div class="card">
+    <h3>Service Logs</h3>
+    <div style="margin-bottom: 15px;">
+        <label for="log-service">Select Service:</label>
+        <select id="log-service" onchange="viewLogs(this.value)">
+            <option value="pychatter-server">pychatter-server</option>
+            <option value="pychatter-web">pychatter-web</option>
+            <option value="nginx">nginx</option>
+        </select>
+    </div>
+    <pre id="logs-output" style="
+        background: #252525;
+        border: 1px solid #333;
+        border-radius: 4px;
+        padding: 15px;
+        overflow-x: auto;
+        max-height: 400px;
+        overflow-y: auto;
+        color: #00d4ff;
+        font-family: 'Courier New', monospace;
+        font-size: 12px;
+        line-height: 1.4;
+    ">Loading logs...</pre>
+</div>
+
+<style>
+    .btn-sm {
+        padding: 6px 12px;
+        font-size: 11px;
+        margin-right: 5px;
+    }
+
+    table {
+        width: 100%;
+    }
+
+    td {
+        padding: 15px;
+        border-bottom: 1px solid #333;
+        vertical-align: middle;
+    }
+
+    select {
+        padding: 8px;
+        background: #252525;
+        border: 1px solid #333;
+        color: #e0e0e0;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 13px;
+    }
+
+    select:focus {
+        outline: none;
+        border-color: #00d4ff;
+    }
+
+    label {
+        display: block;
+        margin-bottom: 8px;
+        color: #a0a0a0;
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+</style>
+
+<script>
+    function restartService(serviceName) {
+        if (confirm(`⚠️ Restart ${serviceName}?\n\nThis will cause a brief service interruption.`)) {
+            fetch(`/api/service/${serviceName}/restart`, {
+                method: 'POST'
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    alert(`✅ ${serviceName} restarted successfully!`);
+                    setTimeout(() => location.reload(), 1000);
+                } else {
+                    alert('❌ Error restarting service: ' + (data.error || 'Unknown error'));
+                }
+            })
+            .catch(err => {
+                alert('❌ Error: ' + err);
+            });
+        }
+    }
+
+    function viewLogs(serviceName) {
+        const logsOutput = document.getElementById('logs-output');
+        logsOutput.textContent = 'Loading logs...';
+
+        fetch(`/api/service/${serviceName}/logs`)
+            .then(r => r.json())
+            .then(data => {
+                if (data.logs) {
+                    logsOutput.textContent = data.logs || 'No logs available';
+                } else {
+                    logsOutput.textContent = 'Error: ' + (data.error || 'Could not fetch logs');
+                }
+            })
+            .catch(err => {
+                logsOutput.textContent = 'Error fetching logs: ' + err;
+            });
+    }
+
+    // Load initial logs
+    viewLogs('pychatter-server');
+</script>
+{% endblock %}

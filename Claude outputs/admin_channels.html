@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+
+{% block title %}Channels - PyChatter Admin{% endblock %}
+{% block page_title %}Channels Management{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h3>Create New Channel</h3>
+    <form id="createChannelForm">
+        <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 15px;">
+            <div>
+                <label for="channel_name">Channel Name</label>
+                <input type="text" id="channel_name" name="channel_name" placeholder="e.g., announcements" required>
+            </div>
+            <div>
+                <label>&nbsp;</label>
+                <button type="submit" class="btn btn-primary" style="width: 100%; margin-bottom: 0;">Create Channel</button>
+            </div>
+        </div>
+    </form>
+</div>
+
+<div class="card">
+    <h3>All Channels</h3>
+
+    {% if channels %}
+        <table>
+            <thead>
+                <tr>
+                    <th>Channel Name</th>
+                    <th>Members</th>
+                    <th>Messages</th>
+                    <th>Created</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for channel in channels %}
+                <tr>
+                    <td><strong>#{{ channel.channel_name }}</strong></td>
+                    <td>{{ channel.member_count }}</td>
+                    <td>{{ channel.message_count }}</td>
+                    <td>{{ channel.created_at }}</td>
+                    <td>
+                        <button class="btn btn-danger btn-sm" onclick="deleteChannel({{ channel.channel_id }}, '#{{ channel.channel_name }}')">Delete</button>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% else %}
+        <div class="alert alert-info">No channels found.</div>
+    {% endif %}
+</div>
+
+<style>
+    .btn-sm {
+        padding: 6px 12px;
+        font-size: 11px;
+    }
+
+    table td {
+        vertical-align: middle;
+    }
+
+    form input {
+        width: 100%;
+    }
+</style>
+
+<script>
+    function deleteChannel(channelId, channelName) {
+        if (confirm(`Are you sure you want to DELETE ${channelName}?\n\n⚠️ All messages will be permanently deleted!\n\nThis action cannot be undone.`)) {
+            fetch(`/api/channel/${channelId}/delete`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    alert(`✅ ${channelName} has been deleted!`);
+                    location.reload();
+                } else {
+                    alert('❌ Error deleting channel: ' + (data.error || 'Unknown error'));
+                }
+            })
+            .catch(err => {
+                alert('❌ Error: ' + err);
+            });
+        }
+    }
+
+    document.getElementById('createChannelForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+        const channelName = document.getElementById('channel_name').value;
+
+        if (confirm(`Create new channel "#${channelName}"?`)) {
+            // Note: This would require a create endpoint in admin_dashboard.py
+            alert('✅ Channel creation feature coming soon!');
+        }
+    });
+</script>
+{% endblock %}

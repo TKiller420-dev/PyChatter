@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+
+{% block title %}Messages - PyChatter Admin{% endblock %}
+{% block page_title %}Message Monitoring{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h3>Recent Messages</h3>
+
+    {% if messages %}
+        <div style="max-height: 600px; overflow-y: auto;">
+            <table>
+                <thead>
+                    <tr>
+                        <th>User</th>
+                        <th>Channel</th>
+                        <th>Message</th>
+                        <th>Timestamp</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for message in messages %}
+                    <tr>
+                        <td><strong>{{ message.username }}</strong></td>
+                        <td>#{{ message.channel_name }}</td>
+                        <td style="max-width: 300px; word-wrap: break-word;">
+                            {% if message.message_text | length > 100 %}
+                                {{ message.message_text[:100] }}...
+                            {% else %}
+                                {{ message.message_text }}
+                            {% endif %}
+                        </td>
+                        <td style="font-size: 12px; color: #a0a0a0;">{{ message.timestamp }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% else %}
+        <div class="alert alert-info">No messages found.</div>
+    {% endif %}
+</div>
+
+<div class="card">
+    <h3>Message Statistics</h3>
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px;">
+        <div style="text-align: center; padding: 15px; background: #252525; border-radius: 4px;">
+            <div style="font-size: 12px; color: #a0a0a0; margin-bottom: 10px;">Total Messages Monitored</div>
+            <div style="font-size: 24px; font-weight: bold; color: #00d4ff;">{{ messages | length }}</div>
+        </div>
+    </div>
+</div>
+
+<style>
+    table {
+        width: 100%;
+        font-size: 13px;
+    }
+
+    thead {
+        position: sticky;
+        top: 0;
+        background: #252525;
+    }
+
+    td {
+        padding: 12px;
+        border-bottom: 1px solid #333;
+    }
+
+    tbody tr:hover {
+        background: #252525;
+    }
+</style>
+{% endblock %}

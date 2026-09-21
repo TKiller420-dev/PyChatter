@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+
+{% block title %}Users - PyChatter Admin{% endblock %}
+{% block page_title %}Users Management{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h3>All Users</h3>
+
+    {% if users %}
+        <table>
+            <thead>
+                <tr>
+                    <th>Username</th>
+                    <th>Email</th>
+                    <th>Role</th>
+                    <th>Status</th>
+                    <th>Last Login</th>
+                    <th>Created</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for user in users %}
+                <tr>
+                    <td><strong>{{ user.username }}</strong></td>
+                    <td>{{ user.email }}</td>
+                    <td>
+                        <select class="role-select" data-user-id="{{ user.user_id }}" onchange="changeUserRole({{ user.user_id }}, this.value)">
+                            <option value="member" {% if user.role == 'member' %}selected{% endif %}>Member</option>
+                            <option value="mod" {% if user.role == 'mod' %}selected{% endif %}>Moderator</option>
+                            <option value="admin" {% if user.role == 'admin' %}selected{% endif %}>Admin</option>
+                            <option value="banned" {% if user.role == 'banned' %}selected{% endif %}>Banned</option>
+                        </select>
+                    </td>
+                    <td>
+                        {% if user.online %}
+                            <span class="status online">🟢 Online</span>
+                        {% else %}
+                            <span class="status offline">⚫ Offline</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ user.last_login or 'Never' }}</td>
+                    <td>{{ user.created_at }}</td>
+                    <td>
+                        {% if user.role != 'banned' %}
+                            <button class="btn btn-danger btn-sm" onclick="banUser({{ user.user_id }}, '{{ user.username }}')">Ban</button>
+                        {% else %}
+                            <span style="color: #666;">—</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% else %}
+        <div class="alert alert-info">No users found.</div>
+    {% endif %}
+</div>
+
+<style>
+    .role-select {
+        padding: 6px 10px;
+        background: #252525;
+        border: 1px solid #333;
+        color: #e0e0e0;
+        border-radius: 3px;
+        cursor: pointer;
+        font-size: 12px;
+    }
+
+    .role-select:focus {
+        outline: none;
+        border-color: #00d4ff;
+    }
+
+    .btn-sm {
+        padding: 6px 12px;
+        font-size: 11px;
+    }
+
+    table td {
+        vertical-align: middle;
+    }
+</style>
+
+<script>
+    function changeUserRole(userId, newRole) {
+        if (confirm(`Change user role to ${newRole}?`)) {
+            fetch(`/api/user/${userId}/role`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ role: newRole })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    alert('✅ Role updated successfully!');
+                    location.reload();
+                } else {
+                    alert('❌ Error updating role: ' + (data.error || 'Unknown error'));
+                }
+            })
+            .catch(err => {
+                alert('❌ Error: ' + err);
+            });
+        }
+    }
+
+    function banUser(userId, username) {
+        if (confirm(`Are you sure you want to ban ${username}?\n\nThey will not be able to login.`)) {
+            fetch(`/api/user/${userId}/ban`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    alert(`✅ ${username} has been banned!`);
+                    location.reload();
+                } else {
+                    alert('❌ Error banning user: ' + (data.error || 'Unknown error'));
+                }
+            })
+            .catch(err => {
+                alert('❌ Error: ' + err);
+            });
+        }
+    }
+</script>
+{% endblock %}
